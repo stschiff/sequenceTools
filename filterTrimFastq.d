@@ -79,7 +79,6 @@ void run() {
     revNuc['G'] = 'C';
     revNuc['N'] = 'N';
     
-    
     auto fwdFr = new GzipByLine(fwdFilename);
     auto bwdFr = new GzipByLine(bwdFilename);
     
