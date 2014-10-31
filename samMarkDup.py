@@ -2,7 +2,7 @@
 
 import sys
 import string
-import 
+import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--remove", action="store_true", help="Remove duplicates instead of marking")
