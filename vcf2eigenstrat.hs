@@ -6,6 +6,7 @@ import Filesystem.Path.CurrentOS (encodeString)
 import Turtle
 import qualified System.IO as IO
 
+main :: IO ()
 main = do
     snpFileName <- options "script to convert a vcf to eigenstrat format"
                    (argPath "snpFileName" "name of the SNP file")
@@ -26,7 +27,7 @@ writeSnpLine :: IO.Handle -> [Text] -> IO ()
 writeSnpLine snpFileH fields = do
     let (chrom:pos:_:ref:alt:_) = fields
         snpName = format (s%"_"%s) chrom pos
-    T.hPutStrLn snpFileH (T.intercalate "\t" [snpName, chrom, "0.0", pos, ref, alt])
+    T.hPutStrLn snpFileH (T.intercalate "\t" [snpName, chrom, "0", pos, ref, alt])
 
 getGenotype :: Text -> Char
 getGenotype genField = case T.unpack (T.take 3 genField) of
