@@ -1,41 +1,37 @@
-import Pipes (Producer, Pipe, yield, await, (>->), runEffect, lift)
+{-# LANGUAGE OverloadedStrings #-}
+
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import Filesystem.Path.CurrentOS (encodeString)
+import Turtle
 import qualified System.IO as IO
-import qualified Pipes.Prelude as P
-import System.Environment (getArgs)
-import Data.List.Split (splitOn)
-import Data.List (intercalate)
-import Control.Monad (liftM)
 
 main = do
-    snpFileName <- liftM head getArgs
-    snpFileH <- IO.openFile snpFileName IO.WriteMode
-    runEffect $ input >-> mainLoop snpFileH >-> P.stdoutLn
-    IO.hClose snpFileH
-    
-input :: Producer String IO ()
-input = P.stdinLn >-> P.filter (\l -> head l /= '#')
+    snpFileName <- options "script to convert a vcf to eigenstrat format"
+                   (argPath "snpFileName" "name of the SNP file")
+    IO.withFile (encodeString snpFileName) IO.WriteMode $ \snpFileH ->
+        foldIO (grep (prefix (notChar '#')) stdin) (mainFold snpFileH)
 
-mainLoop :: IO.Handle -> Pipe String String IO ()
-mainLoop snpFileH = do
-    vcfString <- await
-    let vcfFields = splitOn "\t" vcfString
-    lift $ writeSnpLine snpFileH vcfFields
+mainFold :: IO.Handle -> FoldM IO Text ()
+mainFold snpFileH = FoldM (step snpFileH) (return ()) (const (return ()))
+
+step :: IO.Handle -> () -> Text -> IO ()
+step snpFileH _ line = do
+    let vcfFields = T.splitOn "\t" line
+    writeSnpLine snpFileH vcfFields
     let genFields = drop 9 vcfFields
-    yield $ map getGenotype genFields
-    mainLoop snpFileH
+    putStrLn $ map getGenotype genFields
 
-writeSnpLine :: IO.Handle -> [String] -> IO ()
+writeSnpLine :: IO.Handle -> [Text] -> IO ()
 writeSnpLine snpFileH fields = do
     let (chrom:pos:_:ref:alt:_) = fields
-    let snpName = chrom ++ "_" ++ pos
-    IO.hPutStrLn snpFileH (intercalate "\t" [snpName, chrom, "0.0", pos, ref, alt])
+        snpName = format (s%"_"%s) chrom pos
+    T.hPutStrLn snpFileH (T.intercalate "\t" [snpName, chrom, "0.0", pos, ref, alt])
 
-getGenotype :: String -> Char
-getGenotype genField = case take 3 genField of
-    ['0', _, '0'] -> '0'
+getGenotype :: Text -> Char
+getGenotype genField = case T.unpack (T.take 3 genField) of
+    ['0', _, '0'] -> '2'
     ['1', _, '0'] -> '1'
     ['0', _, '1'] -> '1'
-    ['1', _, '1'] -> '2'
+    ['1', _, '1'] -> '0'
     _     -> '9'
-
-    
