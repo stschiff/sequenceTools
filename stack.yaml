@@ -1,0 +1,5 @@
+flags: {}
+packages:
+- simpleBamCaller/
+extra-deps: []
+resolver: lts-3.8
