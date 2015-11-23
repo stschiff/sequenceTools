@@ -124,4 +124,5 @@ filterTransversions stream = do
     return row
 
 processLinesWithSnpFile:: CallingMode -> Int -> FilePath -> Shell Text -> Shell FreqSumRow
-processLinesWithSnpFile = undefined
+processLinesWithSnpFile mode minDepth snpFileName rawStream = do
+    ()
