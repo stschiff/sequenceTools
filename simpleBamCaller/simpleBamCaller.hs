@@ -27,7 +27,8 @@ data FreqSumRow = FreqSumRow Text Int Char Char [Maybe Int] deriving (Show)
 
 main = OP.execParser parser >>= runWithOpts
   where
-    parser = OP.info (OP.helper <*> argParser) (OP.progDesc "A program to perform simple genotype calling directly from BAM")
+    parser = OP.info (OP.helper <*> argParser) (OP.progDesc "A program to perform simple genotype calling directly \ 
+                                                             \from BAM")
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseTrans <*> parseSnpFile <*>
@@ -37,7 +38,8 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                                           OP.metavar "<MODE>" <>
                                           OP.help "specify the mode of calling: MajorityCalling or RandomCalling")
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <> OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
-                                              OP.help "random seed used for random calling. If not given, use system clock to seed the random number generator")
+                                              OP.help "random seed used for random calling. If not given, use system \  
+                                                       \clock to seed the random number generator")
     parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> OP.showDefault <>
                                        OP.metavar "<DEPTH>" <>
                                        OP.help "specify the minimum depth for a call")
@@ -47,31 +49,41 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
                     OP.help "specify a SNP file (EigenStrat format) for the positions and alleles to call")
     parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <> OP.metavar "<CHROM>" <>
-                                    OP.help "specify the region in the BAM file to call from. Can be just the chromosome, or a string of the form CHROM:START-END")
+                                    OP.help "specify the region in the BAM file to call from. Can be just the \
+                                             \chromosome, or a string of the form CHROM:START-END")
     parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <> OP.metavar "<REF>" <>
                                   OP.help "the reference fasta file")
     parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE>" <> OP.help "input file")
     parseFormat = OP.option OP.auto (OP.metavar "<OUT_FORMAT>" <> OP.long "format" <> OP.short 'o' <>
                                      OP.value FreqSumFormat <> OP.showDefault <>
-                                     OP.help "specify output format: EigenStrat or FreqSum. EigenStrat requires a SnpFile given via --snpFile")
+                                     OP.help "specify output format: EigenStrat or FreqSum. EigenStrat requires a \     
+                                              \SnpFile given via --snpFile")
     
 runWithOpts :: ProgOpt -> IO ()
 runWithOpts opts = do
     case optSeed opts of
         Nothing -> return ()
         Just seed -> setStdGen $ mkStdGen seed
-    let cmd = format ("samtools mpileup -q30 -Q30 -C50 -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
-        rawVcfStream = inshell cmd empty
+    let rawVcfStream = inshell cmd empty
         freqSumStream = processLines (optCallingMode opts) (optMinDepth opts) (optSnpFile opts) rawVcfStream
         filter_ = if (optTransversionOnly opts) then filterTransversions else id
     view (filter_ freqSumStream)
+  where
+    cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
     
 processLines :: CallingMode -> Int -> Maybe FilePath -> Shell Text -> Shell FreqSumRow
-processLines mode minDepth maybeSnpFile rawStream = do
+processLines mode minDepth maybeSnpFile rawStream =
+    case maybeSnpFile of
+        Nothing -> processLinesSimple mode minDepth rawStream
+        Just fn -> processLinesWithSnpFile mode minDepth fn rawStream
+
+processLinesSimple :: CallingMode -> Int -> Shell Text -> Shell FreqSumRow
+processLinesSimple mode minDepth rawStream = do
     line <- rawStream
     let (chrom:posStr:_:refStr:altStr:_:_:_:_:genStrings) = T.words line
         ref = T.head refStr
-        alt = T.head altStr
+    [altField, "<X>"] <- return $ T.splitOn "," altStr
+    let alt = T.head altField
     pos <- liftIO $ case decimal posStr of
             Left e -> error e
             Right (p, _) -> return p
@@ -110,3 +122,6 @@ filterTransversions stream = do
     False <- return $ (ref == 'C') && (alt == 'T')
     False <- return $ (ref == 'T') && (alt == 'C')
     return row
+
+processLinesWithSnpFile:: CallingMode -> Int -> FilePath -> Shell Text -> Shell FreqSumRow
+processLinesWithSnpFile = undefined
