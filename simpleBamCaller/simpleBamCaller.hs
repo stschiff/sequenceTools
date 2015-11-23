@@ -60,7 +60,7 @@ runWithOpts opts = do
     case optSeed opts of
         Nothing -> return ()
         Just seed -> setStdGen $ mkStdGen seed
-    let cmd = format ("samtools mpileup -q30 -Q30 -C50 -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -m3 -M3 -v snps -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
+    let cmd = format ("samtools mpileup -q30 -Q30 -C50 -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
         rawVcfStream = inshell cmd empty
         freqSumStream = processLines (optCallingMode opts) (optMinDepth opts) (optSnpFile opts) rawVcfStream
         filter_ = if (optTransversionOnly opts) then filterTransversions else id
