@@ -26,9 +26,9 @@ data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 
 data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
 
-data VCFentry = VCFentry Text Int [Char] [[Int]]  -- Chrom Pos Alleles Number_of_reads_per_individual
+data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show) -- Chrom Pos Alleles Number_of_reads_per_individual
 
-data SnpEntry = SnpEntry Text Int Char Char -- Chrom Pos Ref Alt
+data SnpEntry = SnpEntry Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
 
 main = OP.execParser parser >>= runWithOpts
   where
@@ -69,11 +69,18 @@ runWithOpts opts = do
     case optSeed opts of
         Nothing -> return ()
         Just seed -> setStdGen $ mkStdGen seed
-    let vcfStream = (head . match vcfPattern) <$> inshell cmd empty
+    let vcfTextStream = inshell cmd empty
+        vcfStream = do
+            line <- vcfTextStream
+            let matchResult = match vcfPattern line
+            case matchResult of
+                [vcf] -> return vcf
+                _ -> error $ "Could not parse VCF line " ++ show line
+        chrom = head . T.splitOn ":" $ optRegion opts
         freqSumStream = case optSnpFile opts of
             Nothing -> processLinesSimple (optCallingMode opts) (optMinDepth opts) (optTransversionOnly opts) 
                                           vcfStream
-            Just fn -> processLinesWithSnpFile fn nrInds (optCallingMode opts) (optMinDepth opts)
+            Just fn -> processLinesWithSnpFile fn nrInds chrom (optCallingMode opts) (optMinDepth opts)
                                                (optTransversionOnly opts) vcfStream
     view freqSumStream
   where
@@ -82,7 +89,8 @@ runWithOpts opts = do
 
 processLinesSimple :: CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
 processLinesSimple mode minDepth transversionsOnly vcfStream = do
-    VCFentry chrom pos [ref, alt] covNums <- vcfStream
+    e@(VCFentry chrom pos [ref, alt] covNums) <- vcfStream
+    False <- return $ ref == 'N'
     when transversionsOnly $ do
         True <- return $ isTransversion ref alt 
         return ()
@@ -96,10 +104,10 @@ vcfPattern = do
     pos <- decimal
     skip tab >> skip word
     skip tab
-    ref <- oneOf "ACTG"
+    ref <- oneOf "NACTG"
     skip tab
-    alt <- (oneOf "ACTG") `sepBy` (char ',')
-    skip (text "<X>") >> skip tab
+    alt <- altAlleles <|> (text "<X>" >> return [])
+    skip tab
     skip $ count 3 (word >> tab)
     skip (text "PL:DPR") >> skip tab
     coverages <- coverage `sepBy1` tab
@@ -108,7 +116,11 @@ vcfPattern = do
     coverage = do
         skip word
         skip (char ':')
-        decimal `sepBy1` (char ',')
+        init <$> decimal `sepBy1` (char ',')
+    altAlleles = do
+        a <- (oneOf "ACTG") `sepBy` (char ',')
+        skip (text ",<X>")
+        return a
 
 word :: Pattern Text
 word = plus $ noneOf "\r\t\n "
@@ -139,9 +151,10 @@ callGenotype mode minDepth covs = do
                                 if rn <= numRef then return 0 else return 2
         _ -> return (-1)
 
-processLinesWithSnpFile :: FilePath -> Int -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
-processLinesWithSnpFile fn nrInds mode minDepth transversionsOnly vcfStream = do
-    (Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
+processLinesWithSnpFile :: FilePath -> Int -> Text -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
+processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream = do
+    x@(Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
+    err . format w $ x
     case maybeVCF of
         Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
@@ -159,7 +172,13 @@ processLinesWithSnpFile fn nrInds mode minDepth transversionsOnly vcfStream = do
             return $ FreqSumRow snpChrom snpPos snpRef snpAlt genotypes
   where
     cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
-    snpStream = (head . match snpPattern) <$> input fn
+    snpStream = do
+        line <- input fn
+        let matchResult = match snpPattern line
+        case matchResult of
+            [e@(SnpEntry snpChrom _ _ _)] -> do
+                True <- return (snpChrom == chrom)
+                return e
 
 snpPattern :: Pattern SnpEntry
 snpPattern = do
