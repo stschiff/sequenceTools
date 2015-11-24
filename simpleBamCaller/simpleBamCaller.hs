@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+import OrderedZip (orderedZip)
+
 import Control.Monad (forM)
 import qualified Data.Text as T
 import Data.Text.Read (decimal)
@@ -65,32 +67,45 @@ runWithOpts opts = do
         Nothing -> return ()
         Just seed -> setStdGen $ mkStdGen seed
     let rawVcfStream = inshell cmd empty
-        freqSumStream = processLines (optCallingMode opts) (optMinDepth opts) (optSnpFile opts) rawVcfStream
+        snpVcfStream = case optSnpFile opts of
+            Nothing -> filterSnps rawVcfStream
+            Just fn -> filterSnpsAtPos fn rawVcfStream
+        freqSumStream = processLines (optCallingMode opts) (optMinDepth opts) snpVcfStream
         filter_ = if (optTransversionOnly opts) then filterTransversions else id
     view (filter_ freqSumStream)
   where
     cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
-    
-processLines :: CallingMode -> Int -> Maybe FilePath -> Shell Text -> Shell FreqSumRow
-processLines mode minDepth maybeSnpFile rawStream =
-    case maybeSnpFile of
-        Nothing -> processLinesSimple mode minDepth rawStream
-        Just fn -> processLinesWithSnpFile mode minDepth fn rawStream
+    filterSnps = fmap Just . inproc "bcftools" ["view", "-H", "-v", "snps", "-m3", "-M3"]
 
-processLinesSimple :: CallingMode -> Int -> Shell Text -> Shell FreqSumRow
-processLinesSimple mode minDepth rawStream = do
-    line <- rawStream
-    let (chrom:posStr:_:refStr:altStr:_:_:_:_:genStrings) = T.words line
-        ref = T.head refStr
-    [altField, "<X>"] <- return $ T.splitOn "," altStr
-    let alt = T.head altField
-    pos <- liftIO $ case decimal posStr of
-            Left e -> error e
-            Right (p, _) -> return p
-    genotypes <- liftIO $ mapM (callFromGenString mode minDepth) genStrings
-    True <- return $ (ref `elem` ['A', 'C', 'T', 'G'])
-    True <- return $ (alt `elem` ['A', 'C', 'T', 'G'])
-    return $ FreqSumRow chrom pos ref alt genotypes
+filterSnpsAtPos :: FilePath -> Shell Text -> Shell (Maybe Text)
+filterSnpsAtPos fn rawVcfStream = do
+    (Just snpLine, maybeLine) <- orderedZip cmp snpStream rawVcfStream
+    return maybeLine
+  where
+    cmp pos line =
+        let vcfPos = (\(Right (p, _)) -> p) . decimal . last . take 2 . T.words $ line
+        in  pos `compare` vcfPos
+    snpStream = (\(Right (p, _)) -> p) . decimal . last . take 4 . T.words <$> input fn
+
+processLines :: CallingMode -> Int -> Shell (Maybe Text) -> Shell (Maybe FreqSumRow)
+processLines mode minDepth rawStream = do
+    maybeLine <- rawStream
+    case maybeLine of
+        Nothing -> return Nothing
+        Just line -> do
+            let (chrom:posStr:_:refStr:altStr:_:_:_:_:genStrings) = T.words line
+                ref = T.head refStr
+            case T.splitOn "," altStr of
+                [altField, "<X>"] -> do
+                    let alt = T.head altField
+                    pos <- liftIO $ case decimal posStr of
+                            Left e -> error e
+                            Right (p, _) -> return p
+                    genotypes <- liftIO $ mapM (callFromGenString mode minDepth) genStrings
+                    if (ref `elem` ['A', 'C', 'T', 'G']) && (alt `elem` ['A', 'C', 'T', 'G'])
+                        then return $ Just (FreqSumRow chrom pos ref alt genotypes)
+                        else return Nothing
+                _ -> return Nothing
 
 callFromGenString :: CallingMode -> Int -> Text -> IO (Maybe Int)
 callFromGenString mode minDepth str = do
@@ -114,15 +129,15 @@ callFromGenString mode minDepth str = do
                         rn <- randomRIO (1, numRef + numAlt)
                         if rn <= numRef then return (Just 0) else return (Just 2)
 
-filterTransversions :: Shell FreqSumRow -> Shell FreqSumRow
+filterTransversions :: Shell (Maybe FreqSumRow) -> Shell (Maybe FreqSumRow)
 filterTransversions stream = do
-    row@(FreqSumRow _ _ ref alt _) <- stream
-    False <- return $ (ref == 'A') && (alt == 'G')
-    False <- return $ (ref == 'G') && (alt == 'A')
-    False <- return $ (ref == 'C') && (alt == 'T')
-    False <- return $ (ref == 'T') && (alt == 'C')
-    return row
+    maybeRow <- stream
+    case maybeRow of
+        Nothing -> return Nothing
+        row@(Just (FreqSumRow _ _ ref alt _)) -> do
+            False <- return $ (ref == 'A') && (alt == 'G')
+            False <- return $ (ref == 'G') && (alt == 'A')
+            False <- return $ (ref == 'C') && (alt == 'T')
+            False <- return $ (ref == 'T') && (alt == 'C')
+            return row
 
-processLinesWithSnpFile:: CallingMode -> Int -> FilePath -> Shell Text -> Shell FreqSumRow
-processLinesWithSnpFile mode minDepth snpFileName rawStream = do
-    ()
