@@ -4,11 +4,10 @@ import OrderedZip (orderedZip)
 
 import Control.Monad (forM)
 import qualified Data.Text as T
-import Data.Text.Read (decimal)
 import qualified Options.Applicative as OP
 import Prelude hiding (FilePath)
 import System.Random (randomRIO, mkStdGen, setStdGen)
-import Turtle hiding (decimal)
+import Turtle
 
 data ProgOpt = ProgOpt {
     optCallingMode :: CallingMode,
@@ -25,7 +24,11 @@ data ProgOpt = ProgOpt {
 data CallingMode = MajorityCalling | RandomCalling deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 
-data FreqSumRow = FreqSumRow Text Int Char Char [Maybe Int] deriving (Show)
+data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
+
+data VCFentry = VCFentry Text Int [Char] [[Int]]  -- Chrom Pos Alleles Number_of_reads_per_individual
+
+data SnpEntry = SnpEntry Text Int Char Char -- Chrom Pos Ref Alt
 
 main = OP.execParser parser >>= runWithOpts
   where
@@ -46,10 +49,10 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                                        OP.metavar "<DEPTH>" <>
                                        OP.help "specify the minimum depth for a call")
     parseTrans = OP.switch (OP.long "--transversionsOnly" <> OP.short 't' <>
-                            OP.help "restrict calling to transversion SNPs")
+                            OP.help "restrict calling to transversion SNPs. Replace Transition SNP calls with Missing \                                      \Data")
     parseSnpFile = OP.option (Just . fromText . T.pack <$> OP.str)
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
-                    OP.help "specify a SNP file (EigenStrat format) for the positions and alleles to call")
+                    OP.help "specify a SNP file (EigenStrat format) for the positions and alleles to call. All \                                     \positions in the SNP file will be output, adding missing data where necessary.")
     parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <> OP.metavar "<CHROM>" <>
                                     OP.help "specify the region in the BAM file to call from. Can be just the \
                                              \chromosome, or a string of the form CHROM:START-END")
@@ -66,78 +69,108 @@ runWithOpts opts = do
     case optSeed opts of
         Nothing -> return ()
         Just seed -> setStdGen $ mkStdGen seed
-    let rawVcfStream = inshell cmd empty
-        snpVcfStream = case optSnpFile opts of
-            Nothing -> filterSnps rawVcfStream
-            Just fn -> filterSnpsAtPos fn rawVcfStream
-        freqSumStream = processLines (optCallingMode opts) (optMinDepth opts) snpVcfStream
-        filter_ = if (optTransversionOnly opts) then filterTransversions else id
-    view (filter_ freqSumStream)
+    let vcfStream = (head . match vcfPattern) <$> inshell cmd empty
+        freqSumStream = case optSnpFile opts of
+            Nothing -> processLinesSimple (optCallingMode opts) (optMinDepth opts) (optTransversionOnly opts) 
+                                          vcfStream
+            Just fn -> processLinesWithSnpFile fn nrInds (optCallingMode opts) (optMinDepth opts)
+                                               (optTransversionOnly opts) vcfStream
+    view freqSumStream
   where
-    cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
-    filterSnps = fmap Just . inproc "bcftools" ["view", "-H", "-v", "snps", "-m3", "-M3"]
+    cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -m2 -M3 -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
+    nrInds = length $ optBamFiles opts
 
-filterSnpsAtPos :: FilePath -> Shell Text -> Shell (Maybe Text)
-filterSnpsAtPos fn rawVcfStream = do
-    (Just snpLine, maybeLine) <- orderedZip cmp snpStream rawVcfStream
-    return maybeLine
+processLinesSimple :: CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
+processLinesSimple mode minDepth transversionsOnly vcfStream = do
+    VCFentry chrom pos [ref, alt] covNums <- vcfStream
+    when transversionsOnly $ do
+        True <- return $ isTransversion ref alt 
+        return ()
+    genotypes <- liftIO $ mapM (callGenotype mode minDepth) covNums
+    return $ FreqSumRow chrom pos ref alt genotypes
+
+vcfPattern :: Pattern VCFentry
+vcfPattern = do
+    chrom <- word
+    skip tab
+    pos <- decimal
+    skip tab >> skip word
+    skip tab
+    ref <- oneOf "ACTG"
+    skip tab
+    alt <- (oneOf "ACTG") `sepBy` (char ',')
+    skip (text "<X>") >> skip tab
+    skip $ count 3 (word >> tab)
+    skip (text "PL:DPR") >> skip tab
+    coverages <- coverage `sepBy1` tab
+    return $ VCFentry chrom pos (ref:alt) coverages
   where
-    cmp pos line =
-        let vcfPos = (\(Right (p, _)) -> p) . decimal . last . take 2 . T.words $ line
-        in  pos `compare` vcfPos
-    snpStream = (\(Right (p, _)) -> p) . decimal . last . take 4 . T.words <$> input fn
+    coverage = do
+        skip word
+        skip (char ':')
+        decimal `sepBy1` (char ',')
 
-processLines :: CallingMode -> Int -> Shell (Maybe Text) -> Shell (Maybe FreqSumRow)
-processLines mode minDepth rawStream = do
-    maybeLine <- rawStream
-    case maybeLine of
-        Nothing -> return Nothing
-        Just line -> do
-            let (chrom:posStr:_:refStr:altStr:_:_:_:_:genStrings) = T.words line
-                ref = T.head refStr
-            case T.splitOn "," altStr of
-                [altField, "<X>"] -> do
-                    let alt = T.head altField
-                    pos <- liftIO $ case decimal posStr of
-                            Left e -> error e
-                            Right (p, _) -> return p
-                    genotypes <- liftIO $ mapM (callFromGenString mode minDepth) genStrings
-                    if (ref `elem` ['A', 'C', 'T', 'G']) && (alt `elem` ['A', 'C', 'T', 'G'])
-                        then return $ Just (FreqSumRow chrom pos ref alt genotypes)
-                        else return Nothing
-                _ -> return Nothing
+word :: Pattern Text
+word = plus $ noneOf "\r\t\n "
 
-callFromGenString :: CallingMode -> Int -> Text -> IO (Maybe Int)
-callFromGenString mode minDepth str = do
-    let [_, dprStr] = T.splitOn ":" str
-        numStrings = T.splitOn "," dprStr
-    (numRef:numAlt:_) <- forM numStrings $ \numStr -> do
-        case decimal numStr of
-            Left e -> error e
-            Right (n, _) -> return n
-    if (numRef + numAlt < minDepth) then
-        return Nothing
-        else
-            case mode of
-                MajorityCalling -> case numRef `compare` numAlt of
-                    LT -> return $ Just 2
-                    GT -> return $ Just 0
-                    EQ -> do
-                        rn <- randomRIO (1, numRef + numAlt)
-                        if rn <= numRef then return (Just 0) else return (Just 2)
-                RandomCalling -> do
-                        rn <- randomRIO (1, numRef + numAlt)
-                        if rn <= numRef then return (Just 0) else return (Just 2)
+isTransversion :: Char -> Char -> Bool
+isTransversion ref alt = not isTransition
+  where
+    isTransition = ((ref == 'A') && (alt == 'G')) || ((ref == 'G') && (alt == 'A')) ||
+                   ((ref == 'C') && (alt == 'T')) || ((ref == 'T') && (alt == 'C'))
 
-filterTransversions :: Shell (Maybe FreqSumRow) -> Shell (Maybe FreqSumRow)
-filterTransversions stream = do
-    maybeRow <- stream
-    case maybeRow of
-        Nothing -> return Nothing
-        row@(Just (FreqSumRow _ _ ref alt _)) -> do
-            False <- return $ (ref == 'A') && (alt == 'G')
-            False <- return $ (ref == 'G') && (alt == 'A')
-            False <- return $ (ref == 'C') && (alt == 'T')
-            False <- return $ (ref == 'T') && (alt == 'C')
-            return row
+callGenotype :: CallingMode -> Int -> [Int] -> IO Int
+callGenotype mode minDepth covs = do
+    case covs of
+        [numRef] -> return 0
+        [numRef, numAlt] -> do
+            if (numRef + numAlt < minDepth) then
+                return (-1)
+                else
+                    case mode of
+                        MajorityCalling -> case numRef `compare` numAlt of
+                            LT -> return 2
+                            GT -> return 0
+                            EQ -> do
+                                rn <- randomRIO (1, numRef + numAlt)
+                                if rn <= numRef then return 0 else return 2
+                        RandomCalling -> do
+                                rn <- randomRIO (1, numRef + numAlt)
+                                if rn <= numRef then return 0 else return 2
+        _ -> return (-1)
+
+processLinesWithSnpFile :: FilePath -> Int -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
+processLinesWithSnpFile fn nrInds mode minDepth transversionsOnly vcfStream = do
+    (Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
+    case maybeVCF of
+        Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
+        Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
+            genotypes <- if transversionsOnly && (not (isTransversion snpRef snpAlt))
+                then return (replicate nrInds (-1))
+                else do
+                    case vcfAlleles of
+                            [ref] -> if ref == snpRef
+                                then return (replicate nrInds 0)
+                                else return (replicate nrInds (-1))
+                            [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
+                                then liftIO $ mapM (callGenotype mode minDepth) vcfNums
+                                else return (replicate nrInds (-1))
+                            _ -> return (replicate nrInds (-1))
+            return $ FreqSumRow snpChrom snpPos snpRef snpAlt genotypes
+  where
+    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
+    snpStream = (head . match snpPattern) <$> input fn
+
+snpPattern :: Pattern SnpEntry
+snpPattern = do
+    skip word >> skip tab
+    chrom <- word
+    skip tab
+    skip word >> skip tab
+    pos <- decimal
+    skip tab
+    ref <- oneOf "ACTG"
+    skip tab
+    alt <- oneOf "ACTG"
+    return $ SnpEntry chrom pos ref alt
 
