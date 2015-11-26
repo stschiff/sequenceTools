@@ -52,7 +52,11 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                             OP.help "restrict calling to transversion SNPs. Replace Transition SNP calls with Missing \                                      \Data")
     parseSnpFile = OP.option (Just . fromText . T.pack <$> OP.str)
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
-                    OP.help "specify a SNP file (EigenStrat format) for the positions and alleles to call. All \                                     \positions in the SNP file will be output, adding missing data where necessary.")
+                    OP.help "specify a SNP file for the positions and alleles to call. All \
+                             \positions in the SNP file will be output, adding missing data where necessary. \
+                             \The file should have three columns (space- or tab-separated): Chromosome, position and \
+                             \alleles, where the alleles should be one reference and one alternative allele \
+                             \separated by a comma.")
     parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <> OP.metavar "<CHROM>" <>
                                     OP.help "specify the region in the BAM file to call from. Can be just the \
                                              \chromosome, or a string of the form CHROM:START-END")
@@ -65,37 +69,32 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                                               \SnpFile given via --snpFile")
     
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts opts = do
-    case optSeed opts of
+runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region reference outFormat bamFiles) = do
+    case seed of
         Nothing -> return ()
-        Just seed -> setStdGen $ mkStdGen seed
-    let vcfTextStream = inshell cmd empty
-        vcfStream = do
-            line <- vcfTextStream
-            let matchResult = match vcfPattern line
-            case matchResult of
-                [vcf] -> return vcf
-                _ -> error $ "Could not parse VCF line " ++ show line
-        chrom = head . T.splitOn ":" $ optRegion opts
-        freqSumStream = case optSnpFile opts of
-            Nothing -> processLinesSimple (optCallingMode opts) (optMinDepth opts) (optTransversionOnly opts) 
-                                          vcfStream
-            Just fn -> processLinesWithSnpFile fn nrInds chrom (optCallingMode opts) (optMinDepth opts)
-                                               (optTransversionOnly opts) vcfStream
+        Just seed_ -> setStdGen $ mkStdGen seed_
+    let vcfStream = parseVCF (inshell cmd empty)
+        chrom = head (T.splitOn ":" region)
+        freqSumStream = case snpFile of
+            Nothing -> processLinesSimple mode minDepth transversionsOnly vcfStream
+            Just fn -> processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream
     view freqSumStream
   where
-    cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools view -m2 -M3 -H") (optReference opts) (optRegion opts) (T.intercalate " " . map (format fp) $ optBamFiles opts)
-    nrInds = length $ optBamFiles opts
+    cmd = case snpFile of
+        Nothing -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
+                           " | bcftools view -m3 -M3 -v snps -H") reference region bams
+        Just fn -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
+                           " | bcftools view -m2 -M3 -H") reference region fn bams
+    nrInds = length bamFiles
+    bams = (T.intercalate " " (map (format fp) bamFiles))
 
-processLinesSimple :: CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
-processLinesSimple mode minDepth transversionsOnly vcfStream = do
-    e@(VCFentry chrom pos [ref, alt] covNums) <- vcfStream
-    False <- return $ ref == 'N'
-    when transversionsOnly $ do
-        True <- return $ isTransversion ref alt 
-        return ()
-    genotypes <- liftIO $ mapM (callGenotype mode minDepth) covNums
-    return $ FreqSumRow chrom pos ref alt genotypes
+parseVCF :: Shell Text -> Shell VCFentry
+parseVCF vcfTextStream = do
+    line <- vcfTextStream
+    let matchResult = match vcfPattern line
+    case matchResult of
+        [vcf] -> return vcf
+        _ -> error $ "Could not parse VCF line " ++ show line
 
 vcfPattern :: Pattern VCFentry
 vcfPattern = do
@@ -124,6 +123,16 @@ vcfPattern = do
 
 word :: Pattern Text
 word = plus $ noneOf "\r\t\n "
+
+processLinesSimple :: CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
+processLinesSimple mode minDepth transversionsOnly vcfTextStream = do
+    e@(VCFentry chrom pos [ref, alt] covNums) <- vcfTextStream
+    False <- return $ ref == 'N'
+    when transversionsOnly $ do
+        True <- return $ isTransversion ref alt 
+        return ()
+    genotypes <- liftIO $ mapM (callGenotype mode minDepth) covNums
+    return $ FreqSumRow chrom pos ref alt genotypes
 
 isTransversion :: Char -> Char -> Bool
 isTransversion ref alt = not isTransition
@@ -154,7 +163,7 @@ callGenotype mode minDepth covs = do
 processLinesWithSnpFile :: FilePath -> Int -> Text -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
 processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream = do
     x@(Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
-    err . format w $ x
+    err (format w x)
     case maybeVCF of
         Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
@@ -182,14 +191,12 @@ processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStrea
 
 snpPattern :: Pattern SnpEntry
 snpPattern = do
-    skip word >> skip tab
     chrom <- word
     skip tab
-    skip word >> skip tab
     pos <- decimal
     skip tab
     ref <- oneOf "ACTG"
-    skip tab
+    skip (char ',')
     alt <- oneOf "ACTG"
     return $ SnpEntry chrom pos ref alt
 
