@@ -65,8 +65,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
     parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE>" <> OP.help "input file")
     parseFormat = OP.option OP.auto (OP.metavar "<OUT_FORMAT>" <> OP.long "format" <> OP.short 'o' <>
                                      OP.value FreqSumFormat <> OP.showDefault <>
-                                     OP.help "specify output format: EigenStrat or FreqSum. EigenStrat requires a \     
-                                              \SnpFile given via --snpFile")
+                                     OP.help "specify output format: EigenStrat or FreqSum")
     
 runWithOpts :: ProgOpt -> IO ()
 runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region reference outFormat bamFiles) = do
@@ -78,7 +77,9 @@ runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region referen
         freqSumStream = case snpFile of
             Nothing -> processLinesSimple mode minDepth transversionsOnly vcfStream
             Just fn -> processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream
-    view freqSumStream
+    case outFormat of
+        FreqSumFormat -> stdout (fmap printFreqSum freqSumStream)
+        EigenStrat -> stdout (fmap printEigenStrat freqSumStream)
   where
     cmd = case snpFile of
         Nothing -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
@@ -132,6 +133,7 @@ processLinesSimple mode minDepth transversionsOnly vcfTextStream = do
         True <- return $ isTransversion ref alt 
         return ()
     genotypes <- liftIO $ mapM (callGenotype mode minDepth) covNums
+    True <- return (any (>0) genotypes)
     return $ FreqSumRow chrom pos ref alt genotypes
 
 isTransversion :: Char -> Char -> Bool
@@ -163,7 +165,7 @@ callGenotype mode minDepth covs = do
 processLinesWithSnpFile :: FilePath -> Int -> Text -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
 processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream = do
     x@(Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
-    err (format w x)
+    -- err (format w x)
     case maybeVCF of
         Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
@@ -200,3 +202,18 @@ snpPattern = do
     alt <- oneOf "ACTG"
     return $ SnpEntry chrom pos ref alt
 
+printFreqSum :: FreqSumRow -> Text
+printFreqSum (FreqSumRow chrom pos ref alt calls) =
+    format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) chrom pos (T.singleton ref) (T.singleton alt) callsStr
+  where
+    callsStr = (T.intercalate "\t" . map (format d)) calls
+
+printEigenStrat :: FreqSumRow -> Text
+printEigenStrat (FreqSumRow _ _ _ _ calls) = (T.concat . map (format d) . map toEigenStratNum) calls
+  where
+    toEigenStratNum c = case c of
+        0 -> 2
+        1 -> 1
+        2 -> 0
+        -1 -> 9
+        _ -> error ("unknown genotype " ++ show c)
