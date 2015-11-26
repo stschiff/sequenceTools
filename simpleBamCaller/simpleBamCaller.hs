@@ -127,12 +127,24 @@ word = plus $ noneOf "\r\t\n "
 
 processLinesSimple :: CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
 processLinesSimple mode minDepth transversionsOnly vcfTextStream = do
-    e@(VCFentry chrom pos [ref, alt] covNums) <- vcfTextStream
+    (VCFentry chrom pos alleles covNums) <- vcfTextStream
+    (normalizedAlleles, normalizedCovNums) <- case alleles of
+        [ref] -> error "should not happen, need at least one alternative allele"
+        [ref, alt] -> return ([ref, alt], covNums)
+        _ -> do
+            let covNumPairs = [(alleles!i, sum [c!!i | c <- covNums]) | i <- length alleles]
+            let minCov = (minimum . map snd) covNumPairs
+            let minAlleles = (map fst . filter ((==minCov) . snd)) covNumPairs
+            rn <- liftIO randomRIO (0, length minAlleles - 1)
+            let rmAllele = minAlleles !! rn
+            let normalizedCovNumPairs = filter ((/=rmAllele) . fst)) covNumPairs
+            return (map fst normalizedCovNumPairs, map snd normalizedCovNumPairs)
+    let [ref, alt] = normalizedAlleles        
     False <- return $ ref == 'N'
     when transversionsOnly $ do
         True <- return $ isTransversion ref alt 
         return ()
-    genotypes <- liftIO $ mapM (callGenotype mode minDepth) covNums
+    genotypes <- liftIO $ mapM (callGenotype mode minDepth) normalizedCovNums
     True <- return (any (>0) genotypes)
     return $ FreqSumRow chrom pos ref alt genotypes
 
@@ -165,21 +177,27 @@ callGenotype mode minDepth covs = do
 processLinesWithSnpFile :: FilePath -> Int -> Text -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
 processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream = do
     x@(Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
-    -- err (format w x)
     case maybeVCF of
         Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
+            let normalizedAlleleI = map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [1..]
+                normalizedVcfAlleles = map (vcfAlleles!!) normalizedAlleleI
+                normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
             genotypes <- if transversionsOnly && (not (isTransversion snpRef snpAlt))
                 then return (replicate nrInds (-1))
                 else do
-                    case vcfAlleles of
+                    case normalizedVcfAlleles of
                             [ref] -> if ref == snpRef
                                 then return (replicate nrInds 0)
-                                else return (replicate nrInds (-1))
+                                else do
+                                    err ("Warning: different reference alleles at " ++ show x)
+                                    return (replicate nrInds (-1))
                             [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
-                                then liftIO $ mapM (callGenotype mode minDepth) vcfNums
-                                else return (replicate nrInds (-1))
-                            _ -> return (replicate nrInds (-1))
+                                then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
+                                else do
+                                    err ("Warning: different alleles at " ++ show x)
+                                    return (replicate nrInds (-1))
+                            _ -> error "should not happen, can only have two alleles after normalization"
             return $ FreqSumRow snpChrom snpPos snpRef snpAlt genotypes
   where
     cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
