@@ -20,5 +20,7 @@ executable simpleBamCaller
                      , random
                      , stm
                      , async
+                     , random-shuffle
+                     , MonadRandom
   default-language:    Haskell2010
 

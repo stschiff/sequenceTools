@@ -3,10 +3,13 @@
 import OrderedZip (orderedZip)
 
 import Control.Monad (forM)
+import Control.Monad.Random (evalRandIO)
+import Data.List (sortBy)
 import qualified Data.Text as T
 import qualified Options.Applicative as OP
 import Prelude hiding (FilePath)
 import System.Random (randomRIO, mkStdGen, setStdGen)
+import System.Random.Shuffle (shuffleM)
 import Turtle
 
 data ProgOpt = ProgOpt {
@@ -132,14 +135,13 @@ processLinesSimple mode minDepth transversionsOnly vcfTextStream = do
         [ref] -> error "should not happen, need at least one alternative allele"
         [ref, alt] -> return ([ref, alt], covNums)
         _ -> do
-            let covNumPairs = [(alleles!i, sum [c!!i | c <- covNums]) | i <- length alleles]
-            let minCov = (minimum . map snd) covNumPairs
-            let minAlleles = (map fst . filter ((==minCov) . snd)) covNumPairs
-            rn <- liftIO randomRIO (0, length minAlleles - 1)
-            let rmAllele = minAlleles !! rn
-            let normalizedCovNumPairs = filter ((/=rmAllele) . fst)) covNumPairs
-            return (map fst normalizedCovNumPairs, map snd normalizedCovNumPairs)
-    let [ref, alt] = normalizedAlleles        
+            let altNumPairs = [(alleles!!i, sum [c!!i | c <- covNums]) | i <- [1 .. (length alleles - 1)]]
+            shuffledAltNumPairs <- liftIO (shuffle altNumPairs)
+            let (alt, _) = head . sortBy (\a b -> snd b `compare` snd a) $ shuffledAltNumPairs
+            let altIndex = snd . head . filter ((==alt) . fst) $ zip alleles [0..]
+            when (altIndex == 0) (error "should not happen, altIndex==0")
+            return ([head alleles, alt], [[c !! 0, c !! altIndex] | c <- covNums])
+    let [ref, alt] = normalizedAlleles
     False <- return $ ref == 'N'
     when transversionsOnly $ do
         True <- return $ isTransversion ref alt 
@@ -147,7 +149,9 @@ processLinesSimple mode minDepth transversionsOnly vcfTextStream = do
     genotypes <- liftIO $ mapM (callGenotype mode minDepth) normalizedCovNums
     True <- return (any (>0) genotypes)
     return $ FreqSumRow chrom pos ref alt genotypes
-
+  where
+    shuffle list = evalRandIO (shuffleM list)
+    
 isTransversion :: Char -> Char -> Bool
 isTransversion ref alt = not isTransition
   where
@@ -190,12 +194,12 @@ processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStrea
                             [ref] -> if ref == snpRef
                                 then return (replicate nrInds 0)
                                 else do
-                                    err ("Warning: different reference alleles at " ++ show x)
+                                    err $ format ("Warning: different reference alleles at "%w) x
                                     return (replicate nrInds (-1))
                             [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
                                 then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
                                 else do
-                                    err ("Warning: different alleles at " ++ show x)
+                                    err $ format ("Warning: different alleles at "%w) x
                                     return (replicate nrInds (-1))
                             _ -> error "should not happen, can only have two alleles after normalization"
             return $ FreqSumRow snpChrom snpPos snpRef snpAlt genotypes
