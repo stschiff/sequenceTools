@@ -1,7 +1,9 @@
 module OrderedZip (orderedZip) where
 
+import Control.Concurrent (myThreadId)
 import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.Async (withAsync, wait)
+import Foreign.StablePtr (newStablePtr)
 import Turtle
 
 data Slot a = Empty | Value a | Done
@@ -10,6 +12,7 @@ orderedZip :: (a -> b -> Ordering) -> Shell a -> Shell b -> Shell (Maybe a, Mayb
 orderedZip cmp sA sB = Shell _foldIOAB
   where
     _foldIOAB (FoldM stepAB beginAB doneAB) = do
+        -- myThreadId >>= newStablePtr
         x0 <- beginAB
 
         tvar <- STM.atomically (STM.newTVar (Empty, Empty))

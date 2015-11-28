@@ -86,9 +86,9 @@ runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region referen
   where
     cmd = case snpFile of
         Nothing -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
-                           " | bcftools view -m3 -M3 -v snps -H") reference region bams
+                           " | bcftools view -v snps -H") reference region bams
         Just fn -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
-                           " | bcftools view -m2 -M3 -H") reference region fn bams
+                           " | bcftools view -H") reference region fn bams
     nrInds = length bamFiles
     bams = (T.intercalate " " (map (format fp) bamFiles))
 
@@ -181,26 +181,21 @@ callGenotype mode minDepth covs = do
 processLinesWithSnpFile :: FilePath -> Int -> Text -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
 processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream = do
     x@(Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
+    -- echo $ format w x
     case maybeVCF of
         Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
-            let normalizedAlleleI = map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [1..]
+            let normalizedAlleleI = map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [0..]
                 normalizedVcfAlleles = map (vcfAlleles!!) normalizedAlleleI
                 normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
             genotypes <- if transversionsOnly && (not (isTransversion snpRef snpAlt))
                 then return (replicate nrInds (-1))
                 else do
                     case normalizedVcfAlleles of
-                            [ref] -> if ref == snpRef
-                                then return (replicate nrInds 0)
-                                else do
-                                    err $ format ("Warning: different reference alleles at "%w) x
-                                    return (replicate nrInds (-1))
+                            [ref] -> if ref == snpRef then return (replicate nrInds 0) else return (replicate nrInds 2)
                             [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
                                 then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
-                                else do
-                                    err $ format ("Warning: different alleles at "%w) x
-                                    return (replicate nrInds (-1))
+                                else liftIO $ mapM (callGenotype mode minDepth) (reverse normalizedVcfNums)
                             _ -> error "should not happen, can only have two alleles after normalization"
             return $ FreqSumRow snpChrom snpPos snpRef snpAlt genotypes
   where
