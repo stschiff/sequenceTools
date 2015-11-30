@@ -2,21 +2,34 @@
 
 import OrderedZip (orderedZip)
 
-import Control.Monad (forM)
+import Control.Exception.Base (throwIO, AssertionFailed(..))
+import Control.Monad (forM, void)
 import Control.Monad.Random (evalRandIO)
+import Control.Monad.Trans.Class (lift)
+import qualified Data.Attoparsec.Text as A
+import Data.Char (isSpace)
 import Data.List (sortBy)
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import qualified Options.Applicative as OP
+import Pipes (Pipe, await, yield, (>->), runEffect, Producer, Pipe, for, cat)
+import Pipes.Attoparsec (parsed)
+import Pipes.Cliff (CreateProcess(..), CmdSpec(..), pipeOutput, NonPipe(..))
+import Pipes.Cliff.Core (defaultHandler)
+import qualified Pipes.Prelude as P
+import Pipes.Safe (runSafeT, SafeT, MonadSafe)
+import Pipes.Text.Encoding (decodeUtf8)
+import qualified Pipes.Text.IO as PT
 import Prelude hiding (FilePath)
 import System.Random (randomRIO, mkStdGen, setStdGen)
 import System.Random.Shuffle (shuffleM)
-import Turtle
+import Turtle hiding (tab, cat)
 
 data ProgOpt = ProgOpt {
     optCallingMode :: CallingMode,
     optSeed :: Maybe Int,
     optMinDepth :: Int,
-    optTransversionOnly :: Bool,
+    optFilter :: FilterMode,
     optSnpFile :: Maybe FilePath,
     optRegion :: Text,
     optReference :: FilePath,
@@ -25,12 +38,10 @@ data ProgOpt = ProgOpt {
 }
 
 data CallingMode = MajorityCalling | RandomCalling deriving (Show, Read)
+data FilterMode = NoFilter | Transversions | TransversionsMissing deriving (Show, Read, Eq)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
-
 data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
-
 data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show) -- Chrom Pos Alleles Number_of_reads_per_individual
-
 data SnpEntry = SnpEntry Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
 
 main = OP.execParser parser >>= runWithOpts
@@ -39,7 +50,7 @@ main = OP.execParser parser >>= runWithOpts
                                                              \from BAM")
 
 argParser :: OP.Parser ProgOpt
-argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseTrans <*> parseSnpFile <*>
+argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseFilter <*> parseSnpFile <*>
                         parseChrom <*> parseRef <*> parseFormat <*> OP.some parseBams
   where
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <> OP.value RandomCalling <> OP.showDefault <>
@@ -51,8 +62,11 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
     parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> OP.showDefault <>
                                        OP.metavar "<DEPTH>" <>
                                        OP.help "specify the minimum depth for a call")
-    parseTrans = OP.switch (OP.long "--transversionsOnly" <> OP.short 't' <>
-                            OP.help "restrict calling to transversion SNPs. Replace Transition SNP calls with Missing \                                      \Data")
+    parseFilter = OP.option OP.auto (OP.long "--tfilter" <> OP.short 't' <>
+                            OP.help "filter transversions. Three options are available: NoFilter (call all sites), \ 
+                                     \Tranversions (remove transition SNPs from the output), TransversionsMissing \
+                                     \(like Tranversions, but only mark Transitions as missing, do not remove them). \
+                                     \The second and third option are equivalent if no SNP file is provided. ")
     parseSnpFile = OP.option (Just . fromText . T.pack <$> OP.str)
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
                     OP.help "specify a SNP file for the positions and alleles to call. All \
@@ -71,86 +85,95 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                                      OP.help "specify output format: EigenStrat or FreqSum")
     
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region reference outFormat bamFiles) = do
+runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region reference outFormat bamFiles) = do
     case seed of
         Nothing -> return ()
         Just seed_ -> setStdGen $ mkStdGen seed_
-    let vcfStream = parseVCF (inshell cmd empty)
-        chrom = head (T.splitOn ":" region)
-        freqSumStream = case snpFile of
-            Nothing -> processLinesSimple mode minDepth transversionsOnly vcfStream
-            Just fn -> processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream
-    case outFormat of
-        FreqSumFormat -> stdout (fmap printFreqSum freqSumStream)
-        EigenStrat -> stdout (fmap printEigenStrat freqSumStream)
-  where
-    cmd = case snpFile of
-        Nothing -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
-                           " | bcftools view -v snps -H") reference region bams
-        Just fn -> format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
+    freqSumProducer <- case snpFile of
+        Nothing -> do
+            let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools \
+                              \view -v snps -H") reference region bams
+            vcfTextProd <- produceFromCommand cmd
+            let vcfProd = parsed vcfParser vcfTextProd
+            return $ vcfProd >-> processVcfSimple mode minDepth filter_
+        Just fn -> do
+            let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
                            " | bcftools view -H") reference region fn bams
-    nrInds = length bamFiles
+            vcfTextProd <- produceFromCommand cmd
+            snpTextProd <- produceFromCommand cmd
+            let vcfProd = parsed vcfParser vcfTextProd
+            let chrom = head (T.splitOn ":" region)
+            let snpProd = parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
+            let jointProd = orderedZip cmp snpProd vcfProd
+            return . fmap snd $ jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth filter_
+    let freqSumToText = case outFormat of
+            FreqSumFormat -> printFreqSum
+            EigenStrat -> printEigenStrat
+    res <- runSafeT . runEffect $ freqSumProducer >-> P.map freqSumToText >-> printToStdOut
+    case res of
+        Left (e, _) -> err . format w $ e
+        Right () -> return ()
+  where
     bams = (T.intercalate " " (map (format fp) bamFiles))
+    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
+    printToStdOut = for cat (lift . lift . T.putStrLn)
 
-parseVCF :: Shell Text -> Shell VCFentry
-parseVCF vcfTextStream = do
-    line <- vcfTextStream
-    let matchResult = match vcfPattern line
-    case matchResult of
-        [vcf] -> return vcf
-        _ -> error $ "Could not parse VCF line " ++ show line
+produceFromCommand :: Text -> IO (Producer Text (SafeT IO) ())
+produceFromCommand cmd = do
+    let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False False defaultHandler
+    (p, _) <- pipeOutput Inherit Inherit createProcess
+    return . void . decodeUtf8 $ p
 
-vcfPattern :: Pattern VCFentry
-vcfPattern = do
+vcfParser :: A.Parser VCFentry
+vcfParser = do
     chrom <- word
-    skip tab
-    pos <- decimal
-    skip tab >> skip word
-    skip tab
-    ref <- oneOf "NACTG"
-    skip tab
-    alt <- altAlleles <|> (text "<X>" >> return [])
-    skip tab
-    skip $ count 3 (word >> tab)
-    skip (text "PL:DPR") >> skip tab
-    coverages <- coverage `sepBy1` tab
+    tab
+    pos <- A.decimal
+    tab >> word >> tab
+    ref <- A.satisfy (A.inClass "NACTG")
+    tab
+    alt <- altAlleles <|> (A.string "<X>" >> return [])
+    tab
+    _ <- A.count 3 (word >> tab)
+    _ <- (A.string "PL:DPR") >> tab
+    coverages <- coverage `A.sepBy1` tab
     return $ VCFentry chrom pos (ref:alt) coverages
   where
     coverage = do
-        skip word
-        skip (char ':')
-        init <$> decimal `sepBy1` (char ',')
+        _ <- word
+        _ <- A.char ':'
+        init <$> A.decimal `A.sepBy1` (A.char ',')
     altAlleles = do
-        a <- (oneOf "ACTG") `sepBy` (char ',')
-        skip (text ",<X>")
+        a <- A.satisfy (A.inClass "ACTG") `A.sepBy` (A.char ',')
+        _ <- (A.string ",<X>")
         return a
 
-word :: Pattern Text
-word = plus $ noneOf "\r\t\n "
+word :: A.Parser Text
+word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
 
-processLinesSimple :: CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
-processLinesSimple mode minDepth transversionsOnly vcfTextStream = do
-    (VCFentry chrom pos alleles covNums) <- vcfTextStream
+tab :: A.Parser ()
+tab = A.char '\t' >> return ()
+
+processVcfSimple :: CallingMode -> Int -> FilterMode -> Pipe VCFentry FreqSumRow (SafeT IO) r
+processVcfSimple mode minDepth filter_ = for cat $ \vcfEntry -> do
+    let (VCFentry chrom pos alleles covNums) = vcfEntry
     (normalizedAlleles, normalizedCovNums) <- case alleles of
-        [ref] -> error "should not happen, need at least one alternative allele"
+        [ref] -> lift . lift . throwIO $ AssertionFailed "should not happen, need at least one alternative allele"
         [ref, alt] -> return ([ref, alt], covNums)
         _ -> do
             let altNumPairs = [(alleles!!i, sum [c!!i | c <- covNums]) | i <- [1 .. (length alleles - 1)]]
-            shuffledAltNumPairs <- liftIO (shuffle altNumPairs)
+            shuffledAltNumPairs <- lift . lift $ shuffle altNumPairs
             let (alt, _) = head . sortBy (\a b -> snd b `compare` snd a) $ shuffledAltNumPairs
             let altIndex = snd . head . filter ((==alt) . fst) $ zip alleles [0..]
-            when (altIndex == 0) (error "should not happen, altIndex==0")
+            when (altIndex == 0) $ (lift . lift . throwIO) (AssertionFailed "should not happen, altIndex==0")
             return ([head alleles, alt], [[c !! 0, c !! altIndex] | c <- covNums])
     let [ref, alt] = normalizedAlleles
-    False <- return $ ref == 'N'
-    when transversionsOnly $ do
-        True <- return $ isTransversion ref alt 
-        return ()
-    genotypes <- liftIO $ mapM (callGenotype mode minDepth) normalizedCovNums
-    True <- return (any (>0) genotypes)
-    return $ FreqSumRow chrom pos ref alt genotypes
+    when (ref /= 'N' && (not transversionsOnly || isTransversion ref alt)) $ do
+        genotypes <- lift . lift $ mapM (callGenotype mode minDepth) normalizedCovNums
+        when (any (>0) genotypes) $ yield (FreqSumRow chrom pos ref alt genotypes)
   where
     shuffle list = evalRandIO (shuffleM list)
+    transversionsOnly = filter_ /= NoFilter
     
 isTransversion :: Char -> Char -> Bool
 isTransversion ref alt = not isTransition
@@ -178,45 +201,40 @@ callGenotype mode minDepth covs = do
                                 if rn <= numRef then return 0 else return 2
         _ -> return (-1)
 
-processLinesWithSnpFile :: FilePath -> Int -> Text -> CallingMode -> Int -> Bool -> Shell VCFentry -> Shell FreqSumRow
-processLinesWithSnpFile fn nrInds chrom mode minDepth transversionsOnly vcfStream = do
-    x@(Just (SnpEntry snpChrom snpPos snpRef snpAlt), maybeVCF) <- orderedZip cmp snpStream vcfStream
-    -- echo $ format w x
-    case maybeVCF of
-        Nothing -> return $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
-        Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums) -> do
+processVcfWithSnpFile :: Int -> CallingMode -> Int -> FilterMode ->
+                                  Pipe (Maybe SnpEntry, Maybe VCFentry) FreqSumRow (SafeT IO) r
+processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
+    case jointEntry of
+        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
+            yield $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
+        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums)) -> do
             let normalizedAlleleI = map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [0..]
                 normalizedVcfAlleles = map (vcfAlleles!!) normalizedAlleleI
                 normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
-            genotypes <- if transversionsOnly && (not (isTransversion snpRef snpAlt))
-                then return (replicate nrInds (-1))
-                else do
-                    case normalizedVcfAlleles of
-                            [ref] -> if ref == snpRef then return (replicate nrInds 0) else return (replicate nrInds 2)
-                            [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
-                                then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
-                                else liftIO $ mapM (callGenotype mode minDepth) (reverse normalizedVcfNums)
-                            _ -> error "should not happen, can only have two alleles after normalization"
-            return $ FreqSumRow snpChrom snpPos snpRef snpAlt genotypes
-  where
-    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
-    snpStream = do
-        line <- input fn
-        let matchResult = match snpPattern line
-        case matchResult of
-            [e@(SnpEntry snpChrom _ _ _)] -> do
-                True <- return (snpChrom == chrom)
-                return e
+            genotypes <- case normalizedVcfAlleles of
+                    [ref] -> if ref == snpRef then return (replicate nrInds 0) else return (replicate nrInds 2)
+                    [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
+                        then lift . lift $ mapM (callGenotype mode minDepth) normalizedVcfNums
+                        else lift . lift $ mapM (callGenotype mode minDepth) (reverse normalizedVcfNums)
+                    _ -> lift . lift . throwIO $ AssertionFailed "should not happen, can only have two alleles after normalization"
+            case filter_ of
+                NoFilter -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                Transversions -> when (isTransversion snpRef snpAlt) $
+                        yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                TransversionsMissing -> if isTransversion snpRef snpAlt
+                        then yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                        else yield (FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1)))
+        _ -> return ()
 
-snpPattern :: Pattern SnpEntry
-snpPattern = do
+snpParser :: A.Parser SnpEntry
+snpParser = do
     chrom <- word
-    skip tab
-    pos <- decimal
-    skip tab
-    ref <- oneOf "ACTG"
-    skip (char ',')
-    alt <- oneOf "ACTG"
+    tab
+    pos <- A.decimal
+    tab
+    ref <- A.satisfy (A.inClass "ACTG")
+    _ <- A.char ','
+    alt <- A.satisfy (A.inClass "ACTG")
     return $ SnpEntry chrom pos ref alt
 
 printFreqSum :: FreqSumRow -> Text
