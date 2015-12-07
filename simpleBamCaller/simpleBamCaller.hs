@@ -11,8 +11,9 @@ import Data.Char (isSpace)
 import Data.List (sortBy)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import Debug.Trace (trace)
 import qualified Options.Applicative as OP
-import Pipes (Pipe, await, yield, (>->), runEffect, Producer, Pipe, for, cat)
+import Pipes (Pipe, await, yield, (>->), runEffect, Producer, Pipe, for, cat, next)
 import Pipes.Attoparsec (parsed)
 import Pipes.Cliff (CreateProcess(..), CmdSpec(..), pipeOutput, NonPipe(..))
 import Pipes.Cliff.Core (defaultHandler)
@@ -62,7 +63,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
     parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> OP.showDefault <>
                                        OP.metavar "<DEPTH>" <>
                                        OP.help "specify the minimum depth for a call")
-    parseFilter = OP.option OP.auto (OP.long "--tfilter" <> OP.short 't' <>
+    parseFilter = OP.option OP.auto (OP.long "tfilter" <> OP.short 't' <> OP.value NoFilter <> OP.showDefault <>
                             OP.help "filter transversions. Three options are available: NoFilter (call all sites), \ 
                                      \Tranversions (remove transition SNPs from the output), TransversionsMissing \
                                      \(like Tranversions, but only mark Transitions as missing, do not remove them). \
@@ -111,7 +112,10 @@ runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region reference outForm
             EigenStrat -> printEigenStrat
     res <- runSafeT . runEffect $ freqSumProducer >-> P.map freqSumToText >-> printToStdOut
     case res of
-        Left (e, _) -> err . format w $ e
+        Left (e, rest) -> do
+            err . format w $ e
+            Right (c, _) <- runSafeT $ next rest
+            err c
         Right () -> return ()
   where
     bams = (T.intercalate " " (map (format fp) bamFiles))
@@ -135,12 +139,14 @@ vcfParser = do
     alt <- altAlleles <|> (A.string "<X>" >> return [])
     tab
     _ <- A.count 3 (word >> tab)
-    _ <- (A.string "PL:DPR") >> tab
+    _ <- A.string "PL:DPR" >> tab
     coverages <- coverage `A.sepBy1` tab
+    _ <- A.satisfy (\c -> c == '\r' || c == '\n')
+    -- trace (show (chrom, pos, ref, alt, coverages)) $ return ()
     return $ VCFentry chrom pos (ref:alt) coverages
   where
     coverage = do
-        _ <- word
+        _ <- A.decimal `A.sepBy1` (A.char ',')
         _ <- A.char ':'
         init <$> A.decimal `A.sepBy1` (A.char ',')
     altAlleles = do
