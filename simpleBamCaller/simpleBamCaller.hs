@@ -9,6 +9,7 @@ import Control.Monad.Trans.Class (lift)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace)
 import Data.List (sortBy)
+import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Debug.Trace (trace)
@@ -101,7 +102,7 @@ runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region reference outForm
             let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
                            " | bcftools view -H") reference region fn bams
             vcfTextProd <- produceFromCommand cmd
-            snpTextProd <- produceFromCommand cmd
+            let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
             let vcfProd = parsed vcfParser vcfTextProd
             let chrom = head (T.splitOn ":" region)
             let snpProd = parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
@@ -136,23 +137,23 @@ vcfParser = do
     tab >> word >> tab
     ref <- A.satisfy (A.inClass "NACTG")
     tab
-    alt <- altAlleles <|> (A.string "<X>" >> return [])
+    alt <- (altAllele <|> xAllele) `A.sepBy1` (A.char ',')
     tab
     _ <- A.count 3 (word >> tab)
     _ <- A.string "PL:DPR" >> tab
     coverages <- coverage `A.sepBy1` tab
     _ <- A.satisfy (\c -> c == '\r' || c == '\n')
     -- trace (show (chrom, pos, ref, alt, coverages)) $ return ()
-    return $ VCFentry chrom pos (ref:alt) coverages
+    let filteredAlt = catMaybes alt
+    let filteredCoverages = [[c | (c, a) <- zip cov (Just ref:alt), a /= Nothing] | cov <- coverages]
+    return $ VCFentry chrom pos (ref:filteredAlt) filteredCoverages
   where
+    altAllele = Just <$> A.satisfy (A.inClass "ACTG")
+    xAllele = A.string "<X>" >> return Nothing
     coverage = do
         _ <- A.decimal `A.sepBy1` (A.char ',')
         _ <- A.char ':'
-        init <$> A.decimal `A.sepBy1` (A.char ',')
-    altAlleles = do
-        a <- A.satisfy (A.inClass "ACTG") `A.sepBy` (A.char ',')
-        _ <- (A.string ",<X>")
-        return a
+        A.decimal `A.sepBy1` (A.char ',')
 
 word :: A.Parser Text
 word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
@@ -210,6 +211,7 @@ callGenotype mode minDepth covs = do
 processVcfWithSnpFile :: Int -> CallingMode -> Int -> FilterMode ->
                                   Pipe (Maybe SnpEntry, Maybe VCFentry) FreqSumRow (SafeT IO) r
 processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
+    -- trace (show jointEntry) (return ())
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
             yield $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
@@ -241,6 +243,9 @@ snpParser = do
     ref <- A.satisfy (A.inClass "ACTG")
     _ <- A.char ','
     alt <- A.satisfy (A.inClass "ACTG")
+    _ <- A.satisfy (\c -> c == '\r' || c == '\n')
+    let ret = SnpEntry chrom pos ref alt
+    -- trace (show ret) $ return ()
     return $ SnpEntry chrom pos ref alt
 
 printFreqSum :: FreqSumRow -> Text
