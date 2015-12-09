@@ -267,7 +267,7 @@ printFreqSum (FreqSumRow chrom pos ref alt calls) =
 printEigenStrat :: Handle -> Pipe FreqSumRow Text (SafeT IO) r
 printEigenStrat snpOutHandle = for cat $ \(FreqSumRow chrom pos ref alt calls) -> do
     let n = format (s%"_"%d) chrom pos
-        snpLine = format (s%"\t"%s%"\t"%d%"\t"%s%"\t"%s) n chrom pos (T.singleton ref) (T.singleton alt)
+        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n chrom pos (T.singleton ref) (T.singleton alt)
     liftIO . T.hPutStrLn snpOutHandle $ snpLine
     yield . T.concat . map (format d . toEigenStratNum) $ calls
   where
