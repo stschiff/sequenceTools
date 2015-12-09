@@ -220,11 +220,12 @@ processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
                 normalizedVcfAlleles = map (vcfAlleles!!) normalizedAlleleI
                 normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
             genotypes <- case normalizedVcfAlleles of
+                    [] -> return (replicate nrInds (-1))
                     [ref] -> if ref == snpRef then return (replicate nrInds 0) else return (replicate nrInds 2)
                     [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
                         then lift . lift $ mapM (callGenotype mode minDepth) normalizedVcfNums
                         else lift . lift $ mapM (callGenotype mode minDepth) (reverse normalizedVcfNums)
-                    _ -> lift . lift . throwIO $ AssertionFailed "should not happen, can only have two alleles after normalization"
+                    _ -> lift . lift . throwIO $ AssertionFailed ("should not happen, can only have two alleles after normalization: " ++ show jointEntry)
             case filter_ of
                 NoFilter -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
                 Transversions -> when (isTransversion snpRef snpAlt) $
