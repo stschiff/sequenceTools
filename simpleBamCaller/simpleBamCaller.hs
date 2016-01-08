@@ -35,6 +35,7 @@ data ProgOpt = ProgOpt {
     optFilter :: FilterMode,
     optSnpFile :: Maybe FilePath,
     optRegion :: Text,
+    optOutChrom :: Maybe Text,
     optReference :: FilePath,
     optOutFormat :: OutFormat,
     optSnpOutFile :: Maybe FilePath,
@@ -55,7 +56,7 @@ main = OP.execParser parser >>= runWithOpts
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseFilter <*> parseSnpFile <*>
-                        parseChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> OP.some parseBams
+                        parseChrom <*> parseOutChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> OP.some parseBams
   where
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <> OP.value RandomCalling <> OP.showDefault <>
                                           OP.metavar "<MODE>" <>
@@ -82,6 +83,8 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
     parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <> OP.metavar "<CHROM>" <>
                                     OP.help "specify the region in the BAM file to call from. Can be just the \
                                              \chromosome, or a string of the form CHROM:START-END")
+    parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <> OP.metavar "<CHROM>" <>
+                                   OP.help "specify the output chromosome name" <> OP.value Nothing)
     parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <> OP.metavar "<REF>" <>
                                   OP.help "the reference fasta file")
     parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE>" <> OP.help "input file, give \
@@ -94,10 +97,14 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                                  OP.help "specify the EigenStrat SNP file. Ignored if Output format is not Eigenstrat")
     
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region reference outFormat snpOutFile bamFiles) = do
+runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region outChrom reference outFormat snpOutFile bamFiles) = do
     case seed of
         Nothing -> return ()
         Just seed_ -> setStdGen $ mkStdGen seed_
+    let chrom = head (T.splitOn ":" region)
+    let outputChrom = case outChrom of
+            Nothing -> chrom
+            Just label -> label
     freqSumProducer <- case snpFile of
         Nothing -> do
             let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools \
@@ -111,16 +118,15 @@ runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region reference outForm
             vcfTextProd <- produceFromCommand cmd
             let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
             let vcfProd = parsed vcfParser vcfTextProd
-            let chrom = head (T.splitOn ":" region)
             let snpProd = parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
             let jointProd = orderedZip cmp snpProd vcfProd
             return . fmap snd $ jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth filter_
     res <- case outFormat of
-            FreqSumFormat -> runSafeT . runEffect $ freqSumProducer >-> P.map printFreqSum >-> printToStdOut
+            FreqSumFormat -> runSafeT . runEffect $ freqSumProducer >-> P.map (printFreqSum outputChrom) >-> printToStdOut
             EigenStrat -> case snpOutFile of
                 Nothing -> throwIO $ AssertionFailed ("need a snpOutFile for EigenStratFormat")
                 Just fn -> withFile (T.unpack . format fp $ fn) WriteMode $ \snpOutHandle ->
-                    runSafeT . runEffect $ freqSumProducer >-> printEigenStrat snpOutHandle >-> printToStdOut
+                    runSafeT . runEffect $ freqSumProducer >-> printEigenStrat outputChrom snpOutHandle >-> printToStdOut
     case res of
         Left (e, rest) -> do
             err . format w $ e
@@ -199,23 +205,21 @@ isTransversion ref alt = not isTransition
 
 callGenotype :: CallingMode -> Int -> [Int] -> IO Int
 callGenotype mode minDepth covs = do
-    case covs of
-        [numRef] -> return 0
-        [numRef, numAlt] -> do
-            if (numRef + numAlt < minDepth) then
-                return (-1)
-                else
-                    case mode of
-                        MajorityCalling -> case numRef `compare` numAlt of
-                            LT -> return 2
-                            GT -> return 0
-                            EQ -> do
-                                rn <- randomRIO (1, numRef + numAlt)
-                                if rn <= numRef then return 0 else return 2
-                        RandomCalling -> do
-                                rn <- randomRIO (1, numRef + numAlt)
-                                if rn <= numRef then return 0 else return 2
-        _ -> return (-1)
+    if sum covs < minDepth then return (-1) else do
+        case covs of
+            [numRef] -> return 0
+            [numRef, numAlt] -> do
+                case mode of
+                    MajorityCalling -> case numRef `compare` numAlt of
+                        LT -> return 2
+                        GT -> return 0
+                        EQ -> do
+                            rn <- randomRIO (1, numRef + numAlt)
+                            if rn <= numRef then return 0 else return 2
+                    RandomCalling -> do
+                            rn <- randomRIO (1, numRef + numAlt)
+                            if rn <= numRef then return 0 else return 2
+            _ -> throwIO (AssertionFailed "should not happen. CallGenotype called with more than two alleles")
 
 processVcfWithSnpFile :: Int -> CallingMode -> Int -> FilterMode ->
                                   Pipe (Maybe SnpEntry, Maybe VCFentry) FreqSumRow (SafeT IO) r
@@ -230,10 +234,12 @@ processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
                 normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
             genotypes <- case normalizedVcfAlleles of
                     [] -> return (replicate nrInds (-1))
-                    [ref] -> if ref == snpRef then return (replicate nrInds 0) else return (replicate nrInds 2)
+                    [ref] -> if ref == snpRef
+                        then return [if sum c >= minDepth then 0 else (-1) | c <- normalizedVcfNums]
+                        else return [if sum c >= minDepth then 2 else (-1) | c <- normalizedVcfNums]
                     [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
                         then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
-                        else liftIO $ mapM (callGenotype mode minDepth) (reverse normalizedVcfNums)
+                        else liftIO $ mapM (callGenotype mode minDepth) (map reverse normalizedVcfNums)
                     _ -> liftIO . throwIO $ AssertionFailed ("should not happen, can only have two alleles after normalization: " ++ show jointEntry)
             case filter_ of
                 NoFilter -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
@@ -258,16 +264,16 @@ snpParser = do
     -- trace (show ret) $ return ()
     return $ SnpEntry chrom pos ref alt
 
-printFreqSum :: FreqSumRow -> Text
-printFreqSum (FreqSumRow chrom pos ref alt calls) =
-    format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) chrom pos (T.singleton ref) (T.singleton alt) callsStr
+printFreqSum :: Text -> FreqSumRow -> Text
+printFreqSum outChrom (FreqSumRow _ pos ref alt calls) =
+    format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) outChrom pos (T.singleton ref) (T.singleton alt) callsStr
   where
     callsStr = (T.intercalate "\t" . map (format d)) calls
 
-printEigenStrat :: Handle -> Pipe FreqSumRow Text (SafeT IO) r
-printEigenStrat snpOutHandle = for cat $ \(FreqSumRow chrom pos ref alt calls) -> do
-    let n = format (s%"_"%d) chrom pos
-        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n chrom pos (T.singleton ref) (T.singleton alt)
+printEigenStrat :: Text -> Handle -> Pipe FreqSumRow Text (SafeT IO) r
+printEigenStrat outChrom snpOutHandle = for cat $ \(FreqSumRow _ pos ref alt calls) -> do
+    let n = format (s%"_"%d) outChrom pos
+        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n outChrom pos (T.singleton ref) (T.singleton alt)
     liftIO . T.hPutStrLn snpOutHandle $ snpLine
     yield . T.concat . map (format d . toEigenStratNum) $ calls
   where
