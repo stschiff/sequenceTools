@@ -111,7 +111,7 @@ runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region outChrom referenc
                               \view -v snps -H") reference region bams
             vcfTextProd <- produceFromCommand cmd
             let vcfProd = parsed vcfParser vcfTextProd
-            return $ vcfProd >-> processVcfSimple mode minDepth filter_
+            return $ vcfProd >-> processVcfSimple (length bamFiles) mode minDepth filter_
         Just fn -> do
             let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
                            " | bcftools view -H") reference region fn bams
@@ -176,9 +176,10 @@ word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
 tab :: A.Parser ()
 tab = A.char '\t' >> return ()
 
-processVcfSimple :: CallingMode -> Int -> FilterMode -> Pipe VCFentry FreqSumRow (SafeT IO) r
-processVcfSimple mode minDepth filter_ = for cat $ \vcfEntry -> do
+processVcfSimple :: Int -> CallingMode -> Int -> FilterMode -> Pipe VCFentry FreqSumRow (SafeT IO) r
+processVcfSimple nrInds mode minDepth filter_ = for cat $ \vcfEntry -> do
     let (VCFentry chrom pos alleles covNums) = vcfEntry
+    when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number of genotypes. Check that bam files have different readgroup sample names")
     (normalizedAlleles, normalizedCovNums) <- case alleles of
         [ref] -> liftIO . throwIO $ AssertionFailed "should not happen, need at least one alternative allele"
         [ref, alt] -> return ([ref, alt], covNums)
@@ -229,9 +230,11 @@ processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
             yield $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums)) -> do
+            when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number of genotypes. Check that bam files have different readgroup sample names")
             let normalizedAlleleI = map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [0..]
                 normalizedVcfAlleles = map (vcfAlleles!!) normalizedAlleleI
                 normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
+            -- trace (show (VCFentry vcfChrom vcfPos vcfAlleles vcfNums)) (return ())
             genotypes <- case normalizedVcfAlleles of
                     [] -> return (replicate nrInds (-1))
                     [ref] -> if ref == snpRef
