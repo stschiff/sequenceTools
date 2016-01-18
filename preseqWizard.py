@@ -15,12 +15,12 @@ args = parser.parse_args()
 
 coverage_per_read = args.coverage / args.mapped_reads
 
-next(args.extrap_file)
 covered_snps = None
 tot_sequenced = None
 
 print("sequenced_reads", "SNPS covered", "Cost", sep="\t")
 
+next(args.extrap_file)
 for line in args.extrap_file:
     fields = line.strip().split()
     exp_tot_mapped = float(fields[0])
