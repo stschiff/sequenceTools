@@ -5,6 +5,7 @@ import gzip
 from itertools import islice, chain
 import sys
 import os
+from operator import itemgetter
 
 class FastqEntry:
     def __init__(self, lines):
@@ -20,9 +21,11 @@ class FastQIterator:
     def __iter__(self):
         return self
     
-    def next(self):
-        [name, seq, dummy, quali] = [self.f.readline() for _ in range(4)]
-        return FastqEntry(name, seq, quali)
+    def __next__(self):
+        lines = [self.f.readline().strip() for _ in range(4)]
+        if not lines[0]:
+            raise StopIteration
+        return FastqEntry(lines)
     
     def __del__(self):
         self.f.close()
@@ -37,13 +40,21 @@ class Index:
         if self.sequence == '-':
             return True
         nrM = sum(t != 'N' and s != t for s, t in zip(querySeq, self.sequence))
-        return nrM <= mismatches
+        return nrM <= self.mismatches
     
     def recordHit(self, seq):
         clippedSeq = seq[:len(self.sequence)]
         if clippedSeq not in self.hits:
             self.hits[clippedSeq] = 0
         self.hits[clippedSeq] += 1
+    
+    def reportStats(self, indexName):
+        if self.sequence != '-':
+            p = (self.sequence, self.hits[self.sequence]) if self.sequence in self.hits else 0
+            print("", "Perfect matches {}:".format(indexName), p, sep="\t")
+            otherMatches = sorted([(k, v) for k, v in self.hits.items() if k != self.sequence], key=itemgetter(1), reverse=True)
+            print("", "Other matches {}:".format(indexName), otherMatches, sep="\t")
+        
 
 class QuadrupelIndex:
     def __init__(self, i1, i2, bc1, bc2, mismatches):
@@ -63,16 +74,21 @@ class QuadrupelIndex:
             return False
         
 class SampleSheet:
-    def __init__(self, sample_sheet_file, outputTemplate, mismatches):
+    def __init__(self, sample_sheet_file, outputTemplate, mismatches, withUndetermined):
         self.samples = {}
         f = open(sample_sheet_file, "r")
         self.outputHandles = {}
+        self.nameOrder = []
+        self.withUndetermined = withUndetermined
+        self.undetermined = 0
         for line in f:
             [name, i1, i2, bc1, bc2] = line.strip().split()
             for letter in i1 + i2 + bc1 + bc2:
                 assert (letter in "ACTGN-"), "illegal Index or Barcode sequence. Must contain only A, C, T, G, N or -"
             self.samples[name] = QuadrupelIndex(i1, i2, bc1, bc2, mismatches)
-        for name in chain(self.samples.keys(), ["Undetermined"]):
+            self.nameOrder.append(name)
+        allNames = chain(self.samples.keys(), ["Undetermined"]) if self.withUndetermined else self.samples.keys()
+        for name in allNames:
             outputNameR1 = outputTemplate.replace("%name%", name).replace("%r%", "1")
             outputNameR2 = outputTemplate.replace("%name%", name).replace("%r%", "2")
             outputDir = os.path.dirname(outputNameR1)
@@ -96,53 +112,61 @@ class SampleSheet:
                 clip2 = 0 if queryBC2 == '-' else len(queryBC2)
                 fastqR1.seq = fastqR1.seq[clip1:]
                 fastqR2.seq = fastqR2.seq[clip2:]
-                self.writeFastq(name, (fastqR1, fastqR2))
+                fastqR1.quali = fastqR1.quali[clip1:]
+                fastqR2.quali = fastqR2.quali[clip2:]
+                self.writeFastQ(name, (fastqR1, fastqR2))
                 break
-            else:
-                self.writeFastq("Undetermined", (fastqR1, fastqR2))
+        else:
+            self.undetermined += 1
+            if self.withUndetermined:
+                self.writeFastQ("Undetermined", (fastqR1, fastqR2))
                 
     def writeFastQ(self, name, fastqPair):
         for i in [0, 1]:
-            lines = [fastqPair[i].name, fastqPair[i].seq, "+", fastqPair[i].quali]
+            lines = [fastqPair[i].name + "\n", fastqPair[i].seq + "\n", "+\n", fastqPair[i].quali + "\n"]
             self.outputHandles[name][i].writelines(lines) 
     
     def reportStats(self):
-        for name in chain(self.samples.keys(), ["Undetermined"]):
+        total = 0
+        for name in self.nameOrder:
             print(name)
             qi = self.samples[name]
-            print("", "Total Reads:", sum(qi.i1.hits.values()))
-            print("", "Perfect matches I1:", qi.i1.hits[qi.i1.sequence])
-            print("", "Other matches I1:", [(k, v) for k, v in qi.i1.hits.items() if k != qi.i1.sequence])
-            print("", "Perfect matches I2:", qi.i2.hits[qi.i2.sequence])
-            print("", "Other matches I2:", [(k, v) for k, v in qi.i2.hits.items() if k != qi.i2.sequence])
-            print("", "Perfect matches BC1:", qi.bc1.hits[qi.bc1.sequence])
-            print("", "Other matches BC1:", [(k, v) for k, v in qi.bc1.hits.items() if k != qi.bc1.sequence])
-            print("", "Perfect matches BC2:", qi.bc2.hits[qi.bc2.sequence])
-            print("", "Other matches BC2:", [(k, v) for k, v in qi.bc2.hits.items() if k != qi.bc2.sequence])
+            total += sum(qi.i1.hits.values())
+            print("", "Total matches:", sum(qi.i1.hits.values()), sep="\t")
+            qi.i1.reportStats("I1")
+            qi.i2.reportStats("I2")
+            qi.bc1.reportStats("BC1")
+            qi.bc2.reportStats("BC2")
+        print("Total reads demultiplexed:", total)
+        print("Undetermined reads:", self.undetermined)
 
 def buildArgumentParser():   
     parser = argparse.ArgumentParser(description="Demultiplex Fastq files and trim barcodes")
     parser.add_argument('-s', "--sample_sheet", metavar="<SAMPLE_SHEET>", help="The file containing the sample information. Tab separated file, where every sample gets a row. The columsn are: 1) Sample_name; 2) Index 1 (P5); 3) Index2 (P7); 4) Internal Barcode Read 1; 5) Internal Barcode Read2. You can use the special symbol '-' to denote the absence of a barcode.", required=True)
     parser.add_argument('-m', "--mismatches", metavar="<mismatches>", type=int, default=1, help="the number of mismatches allowed in the index- and barcode-recognition. Default=1")
-    parser.add_argument("-o", "--output_template", metavar="<OUTPUT_DIRECTORY>", required=True, help="template for files to write. Can be arbitrary paths including magic place holders %name%, which will be replaced by the sample name, and %r%, which will be replaced by the read (1 or 2)")
+    parser.add_argument("-o", "--output_template", metavar="<OUTPUT_DIRECTORY>", required=True, help="template for files to write. Can be arbitrary paths including magic place holders %%name%%, which will be replaced by the sample name, and %%r%%, which will be replaced by the read (1 or 2)")
+    parser.add_argument("--endAfter", metavar="<READS>", type=int, help="if given, process only so many reads (for debug purposes mainly)")
     parser.add_argument("--fastqR1", required=True, metavar="<FASTQ_Read1>", help="fastq file for read1")
     parser.add_argument("--fastqR2", required=True, metavar="<FASTQ_Read2>", help="fastq file for read2")
     parser.add_argument("--fastqI1", required=True, metavar="<FASTQ_IndexRead1>", help="fastq file for index read1")
     parser.add_argument("--fastqI2", required=True, metavar="<FASTQ_IndexRead2>", help="fastq file for index read2")
+    parser.add_argument("--withUndetermined", action="store_true", default=False, help="output also Undetermined reads")
     return parser
 
 if __name__ == "__main__":
     parser = buildArgumentParser()
     args = parser.parse_args()
-    sampleSheet = SampleSheet(args.sample_sheet, args.output_template, args.mismatches)
-
+    sampleSheet = SampleSheet(args.sample_sheet, args.output_template, args.mismatches, args.withUndetermined)
     nr = 1
-    for (r1, r2, i1, i2) in zip (FastQIterator(args.fastqR1), FastQIterator(args.fastqR2), FastQIterator(args.fastqI1), FastQIterator(args.fastqI2)):
+    for (r1, r2, i1, i2) in zip(FastQIterator(args.fastqR1), FastQIterator(args.fastqR2), FastQIterator(args.fastqI1), FastQIterator(args.fastqI2)):
         if nr % 10000 == 0:
             print("processing line {}".format(nr), file=sys.stderr)
         sampleSheet.process(r1, r2, i1, i2)
         nr += 1
-        if nr > 30000:
-            break
+        if args.endAfter is not None:
+            if nr > args.endAfter:
+                break
+
+    sampleSheet.reportStats()
     
     

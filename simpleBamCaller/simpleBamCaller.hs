@@ -32,7 +32,7 @@ data ProgOpt = ProgOpt {
     optCallingMode :: CallingMode,
     optSeed :: Maybe Int,
     optMinDepth :: Int,
-    optFilter :: FilterMode,
+    optTransversionsOnly :: Bool,
     optSnpFile :: Maybe FilePath,
     optRegion :: Text,
     optOutChrom :: Maybe Text,
@@ -42,8 +42,7 @@ data ProgOpt = ProgOpt {
     optBamFiles :: [FilePath]
 }
 
-data CallingMode = MajorityCalling | RandomCalling deriving (Show, Read)
-data FilterMode = NoFilter | Transversions | TransversionsMissing deriving (Show, Read, Eq)
+data CallingMode = MajorityCalling | RandomCalling | RareCalling deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
 data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show) -- Chrom Pos Alleles Number_of_reads_per_individual
@@ -55,23 +54,24 @@ main = OP.execParser parser >>= runWithOpts
                                                              \from BAM")
 
 argParser :: OP.Parser ProgOpt
-argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseFilter <*> parseSnpFile <*>
+argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseTransversionsOnly <*> parseSnpFile <*>
                         parseChrom <*> parseOutChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> OP.some parseBams
   where
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <> OP.value RandomCalling <> OP.showDefault <>
                                           OP.metavar "<MODE>" <>
-                                          OP.help "specify the mode of calling: MajorityCalling or RandomCalling")
+                                          OP.help "specify the mode of calling: MajorityCalling, RandomCalling or RareCalling. \
+                                                  \MajorityCalling: Pick the allele supported by the most reads. If equal numbers of \
+                                                  \Alleles fulfil this, pick one at random. RandomCalling: Pick one read at random. \
+                                                  \RareCalling: Require a number of reads equal to the minDepth supporting the alternative \
+                                                  \allele to call a heterozygote. Otherwise call homozygous reference or missing depending on \
+                                                  \depth. For RareCalling you should use --minDepth 2.")
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <> OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
                                               OP.help "random seed used for random calling. If not given, use system \  
                                                        \clock to seed the random number generator")
     parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> OP.showDefault <>
                                        OP.metavar "<DEPTH>" <>
-                                       OP.help "specify the minimum depth for a call")
-    parseFilter = OP.option OP.auto (OP.long "tfilter" <> OP.short 't' <> OP.value NoFilter <> OP.showDefault <>
-                            OP.help "filter transversions. Three options are available: NoFilter (call all sites), \ 
-                                     \Tranversions (remove transition SNPs from the output), TransversionsMissing \
-                                     \(like Tranversions, but only mark Transitions as missing, do not remove them). \
-                                     \The second and third option are equivalent if no SNP file is provided. ")
+                                       OP.help "specify the minimum depth for a call. This has a sepcial meaning for RareCalling, see --mode")
+    parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <> OP.help "Remove transition SNPs from the output)")
     parseSnpFile = OP.option (Just . fromText . T.pack <$> OP.str)
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
                     OP.help "specify a SNP file for the positions and alleles to call. All \
@@ -97,7 +97,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
                                  OP.help "specify the EigenStrat SNP file. Ignored if Output format is not Eigenstrat")
     
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region outChrom reference outFormat snpOutFile bamFiles) = do
+runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChrom reference outFormat snpOutFile bamFiles) = do
     case seed of
         Nothing -> return ()
         Just seed_ -> setStdGen $ mkStdGen seed_
@@ -111,7 +111,7 @@ runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region outChrom referenc
                               \view -v snps -H") reference region bams
             vcfTextProd <- produceFromCommand cmd
             let vcfProd = parsed vcfParser vcfTextProd
-            return $ vcfProd >-> processVcfSimple (length bamFiles) mode minDepth filter_
+            return $ vcfProd >-> processVcfSimple (length bamFiles) mode minDepth transversionsOnly
         Just fn -> do
             let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
                            " | bcftools view -H") reference region fn bams
@@ -120,7 +120,7 @@ runWithOpts (ProgOpt mode seed minDepth filter_ snpFile region outChrom referenc
             let vcfProd = parsed vcfParser vcfTextProd
             let snpProd = parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
             let jointProd = orderedZip cmp snpProd vcfProd
-            return . fmap snd $ jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth filter_
+            return . fmap snd $ jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth transversionsOnly
     res <- case outFormat of
             FreqSumFormat -> runSafeT . runEffect $ freqSumProducer >-> P.map (printFreqSum outputChrom) >-> printToStdOut
             EigenStrat -> case snpOutFile of
@@ -176,8 +176,8 @@ word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
 tab :: A.Parser ()
 tab = A.char '\t' >> return ()
 
-processVcfSimple :: Int -> CallingMode -> Int -> FilterMode -> Pipe VCFentry FreqSumRow (SafeT IO) r
-processVcfSimple nrInds mode minDepth filter_ = for cat $ \vcfEntry -> do
+processVcfSimple :: Int -> CallingMode -> Int -> Bool -> Pipe VCFentry FreqSumRow (SafeT IO) r
+processVcfSimple nrInds mode minDepth transversionsOnly = for cat $ \vcfEntry -> do
     let (VCFentry chrom pos alleles covNums) = vcfEntry
     when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number of genotypes. Check that bam files have different readgroup sample names")
     (normalizedAlleles, normalizedCovNums) <- case alleles of
@@ -196,7 +196,6 @@ processVcfSimple nrInds mode minDepth filter_ = for cat $ \vcfEntry -> do
         when (any (>0) genotypes) $ yield (FreqSumRow chrom pos ref alt genotypes)
   where
     shuffle list = evalRandIO (shuffleM list)
-    transversionsOnly = filter_ /= NoFilter
     
 isTransversion :: Char -> Char -> Bool
 isTransversion ref alt = not isTransition
@@ -220,11 +219,12 @@ callGenotype mode minDepth covs = do
                     RandomCalling -> do
                             rn <- randomRIO (1, numRef + numAlt)
                             if rn <= numRef then return 0 else return 2
+                    RareCalling -> do
+                            if numAlt >= 2 then return 1 else return 0
             _ -> throwIO (AssertionFailed "should not happen. CallGenotype called with more than two alleles")
 
-processVcfWithSnpFile :: Int -> CallingMode -> Int -> FilterMode ->
-                                  Pipe (Maybe SnpEntry, Maybe VCFentry) FreqSumRow (SafeT IO) r
-processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
+processVcfWithSnpFile :: Int -> CallingMode -> Int -> Bool -> Pipe (Maybe SnpEntry, Maybe VCFentry) FreqSumRow (SafeT IO) r
+processVcfWithSnpFile nrInds mode minDepth transversionsOnly = for cat $ \jointEntry -> do
     -- trace (show jointEntry) (return ())
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
@@ -244,13 +244,9 @@ processVcfWithSnpFile nrInds mode minDepth filter_ = for cat $ \jointEntry -> do
                         then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
                         else liftIO $ mapM (callGenotype mode minDepth) (map reverse normalizedVcfNums)
                     _ -> liftIO . throwIO $ AssertionFailed ("should not happen, can only have two alleles after normalization: " ++ show jointEntry)
-            case filter_ of
-                NoFilter -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
-                Transversions -> when (isTransversion snpRef snpAlt) $
-                        yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
-                TransversionsMissing -> if isTransversion snpRef snpAlt
-                        then yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
-                        else yield (FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1)))
+            case transversionsOnly of
+                False -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                True -> when (isTransversion snpRef snpAlt) $ yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
         _ -> return ()
 
 snpParser :: A.Parser SnpEntry
