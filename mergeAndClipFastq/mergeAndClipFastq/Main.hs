@@ -1,23 +1,27 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 import Lib (searchReadEndDistance, mergeReads)
 
+import Codec.Compression.GZip (compress)
 import Control.Monad (void, when)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Managed (runManaged, managed)
 import Control.Monad.Trans.Class (lift)
-import qualified Data.Attoparsec.Text as A
+import qualified Data.Attoparsec.ByteString.Char8 as A
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Lazy.Char8 as BL8
 import Data.IORef (IORef, newIORef, readIORef, modifyIORef)
-import qualified Data.Text as T
 import Options.Applicative (execParser, info, fullDesc, progDesc, auto, strOption, value, option, long, short, metavar, help, showDefault, (<>))
 import qualified Pipes.ByteString as PB
 import Pipes (runEffect, (>->), for, liftIO, Effect, next)
 import Pipes.Attoparsec (parsed)
 import Pipes.GZip (decompress)
 import qualified Pipes.Prelude as P
-import Pipes.Text.Encoding (decodeUtf8)
 import System.IO (withFile, IOMode(..), stderr, hPutStrLn, Handle)
 
 data MyOptions = MyOptions FilePath Int Double Int (Maybe Int) FilePath FilePath
-data FastqEntry = FastqEntry T.Text T.Text T.Text deriving (Show)
+data FastqEntry = FastqEntry B8.ByteString B8.ByteString B8.ByteString deriving (Show)
 
 main :: IO ()
 main = execParser (info parser (fullDesc <> progDesc "merge paired sequencing reads and clip any adapter sequence left or right of the merged fragment.")) >>= runWithOptions
@@ -43,8 +47,8 @@ runWithOptions (MyOptions outPrefix minLength mismatchRate minOverlapSize maxNr 
     outR1H <- managed $ withFile (outPrefix ++ "_1.fastq.gz") WriteMode
     outR2H <- managed $ withFile (outPrefix ++ "_2.fastq.gz") WriteMode
     outMergedH <- managed $ withFile (outPrefix ++ "_merged.fastq.gz") WriteMode
-    let read1Stream = parsed fastqParser . decodeUtf8 . decompress $ PB.fromHandle read1H
-        read2Stream = parsed fastqParser . decodeUtf8 . decompress $ PB.fromHandle read2H
+    let read1Stream = parsed fastqParser . decompress $ PB.fromHandle read1H
+        read2Stream = parsed fastqParser . decompress $ PB.fromHandle read2H
         combinedStream = P.zip read1Stream read2Stream
     statsRef <- liftIO . newIORef $ (0, 0)
     res <- runEffect $ for combinedStream (processFastq statsRef minLength mismatchRate minOverlapSize maxNr outR1H outR2H outMergedH)
@@ -52,7 +56,7 @@ runWithOptions (MyOptions outPrefix minLength mismatchRate minOverlapSize maxNr 
         Left (err, restProd) -> do
             liftIO $ hPutStrLn stderr ("Parsing error: " ++ show err)
             Right (chunk, _) <- next restProd
-            liftIO $ hPutStrLn stderr (T.unpack chunk)
+            liftIO $ hPutStrLn stderr (B8.unpack chunk)
         Right _ -> do
             (nrReads, nrMerged) <- liftIO . readIORef $ statsRef
             liftIO . putStrLn $ "Total Reads processed: " ++ show nrReads
@@ -61,7 +65,7 @@ runWithOptions (MyOptions outPrefix minLength mismatchRate minOverlapSize maxNr 
 fastqParser :: A.Parser FastqEntry
 fastqParser = FastqEntry <$> line <* A.endOfLine <*> seq_ <* A.endOfLine <* A.char '+' <* A.endOfLine <*> line <* A.endOfLine 
   where
-    line = A.takeTill A.isEndOfLine
+    line = A.takeTill (\c -> c == '\n' || c == '\r')
     seq_ = A.takeWhile1 (\c -> c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N')
     
 processFastq :: (MonadIO m) => IORef (Int, Int) -> Int -> Double -> Int -> Maybe Int -> Handle -> Handle -> Handle -> (FastqEntry, FastqEntry) -> Effect m ()
@@ -80,7 +84,7 @@ processFastq statsRef minLength mismatchRate minOverlapSize maxNr outR1H outR2H 
         case readEndDistance of
             Just dist -> do
                 let (mergedSeq, mergedQual) = mergeReads seq1 qual1 seq2 qual2 dist
-                if (T.length mergedSeq >= minLength) then do
+                if (B8.length mergedSeq >= minLength) then do
                     liftIO $ modifyIORef statsRef (\(r, m) -> (r, m + 1))
                     liftIO . writeFQ outMergedH $ FastqEntry header1 mergedSeq mergedQual
                 else do
@@ -91,4 +95,5 @@ processFastq statsRef minLength mismatchRate minOverlapSize maxNr outR1H outR2H 
                 liftIO . writeFQ outR2H $ FastqEntry header2 seq2 qual2
                     
 writeFQ :: Handle -> FastqEntry -> IO ()
-writeFQ outH fqEntry = undefined
+writeFQ outH (FastqEntry header seq_ qual) =
+    mapM_ (BL8.hPutStr outH . compress . BL8.fromStrict . flip B8.snoc '\n') [header, seq_, "+", qual]
