@@ -1,6 +1,0 @@
-flags: {}
-packages:
-- '.'
-extra-deps:
-- pipes-zlib-0.4.3
-resolver: lts-5.1
