@@ -39,6 +39,8 @@ data ProgOpt = ProgOpt {
     optReference :: FilePath,
     optOutFormat :: OutFormat,
     optSnpOutFile :: Maybe FilePath,
+    optSamtoolsExe :: FilePath,
+    optBcftoolsExe :: FilePath,
     optBamFiles :: [FilePath]
 }
 
@@ -55,7 +57,8 @@ main = OP.execParser parser >>= runWithOpts
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseTransversionsOnly <*> parseSnpFile <*>
-                        parseChrom <*> parseOutChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> OP.some parseBams
+                        parseChrom <*> parseOutChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> parseSamtoolsExe <*>
+                        parseBcftoolsExe <*> OP.some parseBams
   where
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <> OP.value RandomCalling <> OP.showDefault <>
                                           OP.metavar "<MODE>" <>
@@ -95,9 +98,13 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> par
     parseSnpOutFile = OP.option (Just . fromText . T.pack <$> OP.str) (OP.long "snpOutFile" <> OP.short 's' <>
                                  OP.value Nothing <> OP.metavar "<FILE>" <>
                                  OP.help "specify the EigenStrat SNP file. Ignored if Output format is not Eigenstrat")
+    parseSamtoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "samtools" <> OP.value "samtools" <> OP.showDefault <>
+                                  OP.metavar "<SAMTOOLS_PATH>" <> OP.help "path to the samtools-1.2 executable")
+    parseBcftoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "bcftools" <> OP.value "bcftools" <> OP.showDefault <>
+                                  OP.metavar "<BCFTOOLS_PATH>" <> OP.help "path to the bcftools-1.2 executable")
     
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChrom reference outFormat snpOutFile bamFiles) = do
+runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChrom reference outFormat snpOutFile samtools bcftools bamFiles) = do
     case seed of
         Nothing -> return ()
         Just seed_ -> setStdGen $ mkStdGen seed_
@@ -107,14 +114,14 @@ runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChro
             Just label -> label
     freqSumProducer <- case snpFile of
         Nothing -> do
-            let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | bcftools \
-                              \view -v snps -H") reference region bams
+            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | "%fp%" \
+                              \view -v snps -H") samtools reference region bams bcftools
             vcfTextProd <- produceFromCommand cmd
             let vcfProd = parsed vcfParser vcfTextProd
             return $ vcfProd >-> processVcfSimple (length bamFiles) mode minDepth transversionsOnly
         Just fn -> do
-            let cmd = format ("samtools mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
-                           " | bcftools view -H") reference region fn bams
+            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
+                           " | "%fp%" view -H") samtools reference region fn bams bcftools
             vcfTextProd <- produceFromCommand cmd
             let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
             let vcfProd = parsed vcfParser vcfTextProd
