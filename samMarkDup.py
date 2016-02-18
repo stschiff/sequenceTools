@@ -29,18 +29,18 @@ for line in sys.stdin:
     if lastRead == (rname, pos, seq):
         fields[1] = str(flag | 0x400)
         lastReadCount += 1
+        if not args.remove:
+            print "\t".join(fields)
     else:
         if lastReadCount > 0:
             if lastReadCount not in dupCounts:
-                dupCounts[lastReadCount] = 1
-            else:
-                dupCounts[lastReadCount] += 1
+                dupCounts[lastReadCount] = 0
+            dupCounts[lastReadCount] += 1
         fields[1] = str(flag & (~0x400))
         lastRead = (rname, pos, seq)
         lastReadCount = 1
-    
-    if not args.remove:
         print "\t".join(fields)
+    
 
 sys.stderr.write("Cardinality\tCounts\n")
 for c in sorted(dupCounts.keys()):
