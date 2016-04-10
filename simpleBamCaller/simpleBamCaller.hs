@@ -47,64 +47,85 @@ data ProgOpt = ProgOpt {
 data CallingMode = MajorityCalling | RandomCalling | RareCalling deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
-data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show) -- Chrom Pos Alleles Number_of_reads_per_individual
+            -- Chrom Pos Alleles Number_of_reads_per_individual
+data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show)
 data SnpEntry = SnpEntry Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
 
 main = OP.execParser parser >>= runWithOpts
   where
-    parser = OP.info (OP.helper <*> argParser) (OP.progDesc "A program to perform simple genotype calling directly \ 
-                                                             \from BAM")
+    parser = OP.info (OP.helper <*> argParser)
+                     (OP.progDesc "A program to perform simple genotype calling directly from BAM")
 
 argParser :: OP.Parser ProgOpt
-argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*> parseTransversionsOnly <*> parseSnpFile <*>
-                        parseChrom <*> parseOutChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> parseSamtoolsExe <*>
-                        parseBcftoolsExe <*> OP.some parseBams
+argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
+                        parseTransversionsOnly <*> parseSnpFile <*> parseChrom <*>
+                        parseOutChrom <*> parseRef <*> parseFormat <*> parseSnpOutFile <*> 
+                        parseSamtoolsExe <*> parseBcftoolsExe <*> OP.some parseBams
   where
-    parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <> OP.value RandomCalling <> OP.showDefault <>
-                                          OP.metavar "<MODE>" <>
-                                          OP.help "specify the mode of calling: MajorityCalling, RandomCalling or RareCalling. \
-                                                  \MajorityCalling: Pick the allele supported by the most reads. If equal numbers of \
-                                                  \Alleles fulfil this, pick one at random. RandomCalling: Pick one read at random. \
-                                                  \RareCalling: Require a number of reads equal to the minDepth supporting the alternative \
-                                                  \allele to call a heterozygote. Otherwise call homozygous reference or missing depending on \
-                                                  \depth. For RareCalling you should use --minDepth 2.")
-    parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <> OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
-                                              OP.help "random seed used for random calling. If not given, use system \  
-                                                       \clock to seed the random number generator")
-    parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> OP.showDefault <>
+    parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <>
+                       OP.value RandomCalling <> OP.showDefault <> OP.metavar "<MODE>" <>
+                       OP.help "specify the mode of calling: MajorityCalling, RandomCalling or \
+                                \RareCalling. MajorityCalling: Pick the allele supported by the \   
+                                \most reads. If equal numbers of Alleles fulfil this, pick one at \
+                                \random. RandomCalling: Pick one read at random. RareCalling: \
+                                \Require a number of reads equal to the minDepth supporting the \
+                                \alternative allele to call a heterozygote. Otherwise call \
+                                \homozygous reference or missing depending on depth. For \
+                                \RareCalling you should use --minDepth 2.")
+    parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <> OP.value Nothing <>
+                OP.metavar "<RANDOM_SEED>" <> OP.help "random seed used for random calling. If \
+                \not given, use system clock to seed the random number generator")
+    parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> 
+                                       OP.showDefault <>
                                        OP.metavar "<DEPTH>" <>
-                                       OP.help "specify the minimum depth for a call. This has a sepcial meaning for RareCalling, see --mode")
-    parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <> OP.help "Remove transition SNPs from the output)")
+                                       OP.help "specify the minimum depth for a call. This has a \
+                                                \special meaning for RareCalling, see --mode")
+    parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <>
+                    OP.help "Remove transition SNPs from the output)")
     parseSnpFile = OP.option (Just . fromText . T.pack <$> OP.str)
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
                     OP.help "specify a SNP file for the positions and alleles to call. All \
-                             \positions in the SNP file will be output, adding missing data where necessary. \
-                             \The file should have three columns (space- or tab-separated): Chromosome, position and \
-                             \alleles, where the alleles should be one reference and one alternative allele \
-                             \separated by a comma. Note that this file needs to have a difference format than \
+                             \positions in the SNP file will be output, adding missing data where \
+                             \necessary. The file should have three columns (space- or \
+                             \tab-separated): Chromosome, position and \
+                             \alleles, where the alleles should be one reference and one \
+                             \alternative allele \
+                             \separated by a comma. Note that this file needs to have a difference \
+                             \format than \
                              \the snp files in Eigenstrat because of samtools specifications.")
-    parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <> OP.metavar "<CHROM>" <>
-                                    OP.help "specify the region in the BAM file to call from. Can be just the \
-                                             \chromosome, or a string of the form CHROM:START-END")
-    parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <> OP.metavar "<CHROM>" <>
+    parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
+                            OP.metavar "<CHROM>" <> OP.help "specify the region in the BAM file to \
+                            \call from. Can be just the chromosome, or a string of the form \
+                            \CHROM:START-END")
+    parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <>
+                                    OP.metavar "<CHROM>" <>
                                    OP.help "specify the output chromosome name" <> OP.value Nothing)
-    parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <> OP.metavar "<REF>" <>
+    parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <> 
+                                   OP.metavar "<REF>" <>
                                   OP.help "the reference fasta file")
-    parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE>" <> OP.help "input file, give \
-                                                            \multiple files for multiple samples")
-    parseFormat = OP.option OP.auto (OP.metavar "<OUT_FORMAT>" <> OP.long "format" <> OP.short 'o' <>
+    parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE>" <>
+                                    OP.help "input file, give multiple files for multiple samples")
+    parseFormat = OP.option OP.auto (OP.metavar "<OUT_FORMAT>" <> OP.long "format" <>
+                                     OP.short 'o' <>
                                      OP.value FreqSumFormat <> OP.showDefault <>
                                      OP.help "specify output format: EigenStrat or FreqSum")
-    parseSnpOutFile = OP.option (Just . fromText . T.pack <$> OP.str) (OP.long "snpOutFile" <> OP.short 's' <>
+    parseSnpOutFile = OP.option (Just . fromText . T.pack <$> OP.str) (OP.long "snpOutFile" <> 
+                                    OP.short 's' <>
                                  OP.value Nothing <> OP.metavar "<FILE>" <>
-                                 OP.help "specify the EigenStrat SNP file. Ignored if Output format is not Eigenstrat")
-    parseSamtoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "samtools" <> OP.value "samtools" <> OP.showDefault <>
-                                  OP.metavar "<SAMTOOLS_PATH>" <> OP.help "path to the samtools-1.2 executable")
-    parseBcftoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "bcftools" <> OP.value "bcftools" <> OP.showDefault <>
-                                  OP.metavar "<BCFTOOLS_PATH>" <> OP.help "path to the bcftools-1.2 executable")
+                                 OP.help "specify the EigenStrat SNP file. Ignored if Output \
+                                          \format is not Eigenstrat")
+    parseSamtoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "samtools" <>
+                                OP.value "samtools" <> OP.showDefault <>
+                                  OP.metavar "<SAMTOOLS_PATH>" <>
+                                  OP.help "path to the samtools-1.2 executable")
+    parseBcftoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "bcftools" <>
+                                  OP.value "bcftools" <> OP.showDefault <>
+                                  OP.metavar "<BCFTOOLS_PATH>" <> OP.help "path to the \
+                                  \bcftools-1.2 executable")
     
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChrom reference outFormat snpOutFile samtools bcftools bamFiles) = do
+runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChrom reference 
+                     outFormat snpOutFile samtools bcftools bamFiles) = do
     case seed of
         Nothing -> return ()
         Just seed_ -> setStdGen $ mkStdGen seed_
@@ -114,26 +135,30 @@ runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChro
             Just label -> label
     freqSumProducer <- case snpFile of
         Nothing -> do
-            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%" | "%fp%" \
-                              \view -v snps -H") samtools reference region bams bcftools
+            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
+                              " | "%fp%" view -v snps -H") samtools reference region bams bcftools
             vcfTextProd <- produceFromCommand cmd
             let vcfProd = parsed vcfParser vcfTextProd
             return $ vcfProd >-> processVcfSimple (length bamFiles) mode minDepth transversionsOnly
         Just fn -> do
-            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%" "%s%
-                           " | "%fp%" view -H") samtools reference region fn bams bcftools
+            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%
+                              " "%s%" | "%fp%" view -H") samtools reference region fn bams bcftools
             vcfTextProd <- produceFromCommand cmd
             let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
             let vcfProd = parsed vcfParser vcfTextProd
-            let snpProd = parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
+            let snpProd =
+                    parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
             let jointProd = orderedZip cmp snpProd vcfProd
-            return . fmap snd $ jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth transversionsOnly
+            return . fmap snd $ jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth 
+                                              transversionsOnly
     res <- case outFormat of
-            FreqSumFormat -> runSafeT . runEffect $ freqSumProducer >-> P.map (printFreqSum outputChrom) >-> printToStdOut
+            FreqSumFormat -> runSafeT . runEffect $ freqSumProducer >->
+                                        P.map (printFreqSum outputChrom) >-> printToStdOut
             EigenStrat -> case snpOutFile of
                 Nothing -> throwIO $ AssertionFailed ("need a snpOutFile for EigenStratFormat")
                 Just fn -> withFile (T.unpack . format fp $ fn) WriteMode $ \snpOutHandle ->
-                    runSafeT . runEffect $ freqSumProducer >-> printEigenStrat outputChrom snpOutHandle >-> printToStdOut
+                    runSafeT . runEffect $ freqSumProducer >->
+                                    printEigenStrat outputChrom snpOutHandle >-> printToStdOut
     case res of
         Left (e, rest) -> do
             err . format w $ e
@@ -147,7 +172,8 @@ runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChro
 
 produceFromCommand :: Text -> IO (Producer Text (SafeT IO) ())
 produceFromCommand cmd = do
-    let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False False defaultHandler
+    let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False 
+                                                        False defaultHandler
     (p, _) <- pipeOutput Inherit Inherit createProcess
     return . void . decodeUtf8 $ p
 
@@ -167,7 +193,8 @@ vcfParser = do
     _ <- A.satisfy (\c -> c == '\r' || c == '\n')
     -- trace (show (chrom, pos, ref, alt, coverages)) $ return ()
     let filteredAlt = catMaybes alt
-    let filteredCoverages = [[c | (c, a) <- zip cov (Just ref:alt), a /= Nothing] | cov <- coverages]
+    let filteredCoverages =
+            [[c | (c, a) <- zip cov (Just ref:alt), a /= Nothing] | cov <- coverages]
     return $ VCFentry chrom pos (ref:filteredAlt) filteredCoverages
   where
     altAllele = Just <$> A.satisfy (A.inClass "ACTG")
@@ -186,16 +213,20 @@ tab = A.char '\t' >> return ()
 processVcfSimple :: Int -> CallingMode -> Int -> Bool -> Pipe VCFentry FreqSumRow (SafeT IO) r
 processVcfSimple nrInds mode minDepth transversionsOnly = for cat $ \vcfEntry -> do
     let (VCFentry chrom pos alleles covNums) = vcfEntry
-    when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number of genotypes. Check that bam files have different readgroup sample names")
+    when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number \
+            \of genotypes. Check that bam files have different readgroup sample names")
     (normalizedAlleles, normalizedCovNums) <- case alleles of
-        [ref] -> liftIO . throwIO $ AssertionFailed "should not happen, need at least one alternative allele"
+        [ref] -> liftIO . throwIO $ AssertionFailed "should not happen, need at least one \
+                            \alternative allele"
         [ref, alt] -> return ([ref, alt], covNums)
         _ -> do
-            let altNumPairs = [(alleles!!i, sum [c!!i | c <- covNums]) | i <- [1 .. (length alleles - 1)]]
+            let altNumPairs =
+                    [(alleles!!i, sum [c!!i | c <- covNums]) | i <- [1 .. (length alleles - 1)]]
             shuffledAltNumPairs <- liftIO $ shuffle altNumPairs
             let (alt, _) = head . sortBy (\a b -> snd b `compare` snd a) $ shuffledAltNumPairs
             let altIndex = snd . head . filter ((==alt) . fst) $ zip alleles [0..]
-            when (altIndex == 0) $ (liftIO . throwIO) (AssertionFailed "should not happen, altIndex==0")
+            when (altIndex == 0) $ (liftIO . throwIO)
+                            (AssertionFailed "should not happen, altIndex==0")
             return ([head alleles, alt], [[c !! 0, c !! altIndex] | c <- covNums])
     let [ref, alt] = normalizedAlleles
     when (ref /= 'N' && (not transversionsOnly || isTransversion ref alt)) $ do
@@ -228,17 +259,23 @@ callGenotype mode minDepth covs = do
                             if rn <= numRef then return 0 else return 2
                     RareCalling -> do
                             if numAlt >= 2 then return 1 else return 0
-            _ -> throwIO (AssertionFailed "should not happen. CallGenotype called with more than two alleles")
+            _ -> throwIO (AssertionFailed "should not happen. CallGenotype called with more \
+                                            \than two alleles")
 
-processVcfWithSnpFile :: Int -> CallingMode -> Int -> Bool -> Pipe (Maybe SnpEntry, Maybe VCFentry) FreqSumRow (SafeT IO) r
+processVcfWithSnpFile :: Int -> CallingMode -> Int -> Bool -> Pipe (Maybe SnpEntry, Maybe VCFentry) 
+                                        FreqSumRow (SafeT IO) r
 processVcfWithSnpFile nrInds mode minDepth transversionsOnly = for cat $ \jointEntry -> do
     -- trace (show jointEntry) (return ())
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
             yield $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
-        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums)) -> do
-            when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number of genotypes. Check that bam files have different readgroup sample names")
-            let normalizedAlleleI = map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [0..]
+        (Just (SnpEntry snpChrom snpPos snpRef snpAlt),
+         Just (VCFentry vcfChrom vcfPos vcfAlleles vcfNums)) -> do
+            when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent \ 
+                            \number of genotypes. Check that bam files have different \
+                            \readgroup sample names")
+            let normalizedAlleleI =
+                    map snd . filter (\(a, _) -> a == snpRef || a == snpAlt) $ zip vcfAlleles [0..]
                 normalizedVcfAlleles = map (vcfAlleles!!) normalizedAlleleI
                 normalizedVcfNums = [map (v!!) normalizedAlleleI | v <- vcfNums]
             -- trace (show (VCFentry vcfChrom vcfPos vcfAlleles vcfNums)) (return ())
@@ -249,11 +286,14 @@ processVcfWithSnpFile nrInds mode minDepth transversionsOnly = for cat $ \jointE
                         else return [if sum c >= minDepth then 2 else (-1) | c <- normalizedVcfNums]
                     [ref, alt] -> if [ref, alt] == [snpRef, snpAlt]
                         then liftIO $ mapM (callGenotype mode minDepth) normalizedVcfNums
-                        else liftIO $ mapM (callGenotype mode minDepth) (map reverse normalizedVcfNums)
-                    _ -> liftIO . throwIO $ AssertionFailed ("should not happen, can only have two alleles after normalization: " ++ show jointEntry)
+                        else liftIO $ mapM (callGenotype mode minDepth)
+                                        (map reverse normalizedVcfNums)
+                    _ -> liftIO . throwIO $ AssertionFailed ("should not happen, can only have \
+                                    \two alleles after normalization: " ++ show jointEntry)
             case transversionsOnly of
                 False -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
-                True -> when (isTransversion snpRef snpAlt) $ yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                True -> when (isTransversion snpRef snpAlt) $
+                                yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
         _ -> return ()
 
 snpParser :: A.Parser SnpEntry
@@ -279,7 +319,8 @@ printFreqSum outChrom (FreqSumRow _ pos ref alt calls) =
 printEigenStrat :: Text -> Handle -> Pipe FreqSumRow Text (SafeT IO) r
 printEigenStrat outChrom snpOutHandle = for cat $ \(FreqSumRow _ pos ref alt calls) -> do
     let n = format (s%"_"%d) outChrom pos
-        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n outChrom pos (T.singleton ref) (T.singleton alt)
+        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n outChrom pos (T.singleton ref) 
+                            (T.singleton alt)
     liftIO . T.hPutStrLn snpOutHandle $ snpLine
     yield . T.concat . map (format d . toEigenStratNum) $ calls
   where
