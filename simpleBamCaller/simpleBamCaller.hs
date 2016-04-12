@@ -5,6 +5,7 @@ import OrderedZip (orderedZip)
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad.Random (evalRandIO)
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
 import Control.Monad.Trans.State.Strict (runStateT)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace)
@@ -20,41 +21,41 @@ import Pipes.Cliff (CreateProcess(..), CmdSpec(..), pipeOutput, NonPipe(..))
 import Pipes.Cliff.Core (defaultHandler)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
+import Pipes.Safe.Prelude (withFile)
 import Pipes.Text.Encoding (decodeUtf8)
 import qualified Pipes.Text.IO as PT
 import Prelude hiding (FilePath)
-import System.IO (withFile, IOMode(..), hPutStrLn)
+import System.IO (IOMode(..), hPutStrLn, stderr, openFile)
 import System.Random (randomRIO, mkStdGen, setStdGen)
 import System.Random.Shuffle (shuffleM)
-import Turtle hiding (tab, cat)
+import Turtle hiding (tab, cat, stderr)
 
-data ProgOpt = ProgOpt CallingMode (Maybe Int) Int Bool (Maybe FilePath) Text (Maybe Text) 
-                       FilePath OutFormat (Maybe FilePath) FilePath FilePath [FilePath]
-
--- optCallingMode :: CallingMode,
--- optSeed :: Maybe Int,
--- optMinDepth :: Int,
--- optTransversionsOnly :: Bool,
--- optSnpFile :: Maybe FilePath,
--- optRegion :: Text,
--- optOutChrom :: Maybe Text,
--- optReference :: FilePath,
--- optOutFormat :: OutFormat,
--- optEigenstratOutPrefix :: Maybe FilePath,
--- optSamtoolsExe :: FilePath,
--- optBcftoolsExe :: FilePath,
--- optBamFiles :: [FilePath]
+data ProgOpt = ProgOpt {
+    optCallingMode :: CallingMode,
+    optSeed :: Maybe Int,
+    optMinDepth :: Int,
+    optTransversionsOnly :: Bool,
+    optSnpFile :: Maybe FilePath,
+    optRegion :: Text,
+    optOutChrom :: Maybe Text,
+    optReference :: FilePath,
+    optOutFormat :: OutFormat,
+    optEigenstratOutPrefix :: Maybe FilePath,
+    optSamtoolsExe :: FilePath,
+    optBcftoolsExe :: FilePath,
+    optBamFiles :: [FilePath]
+}
 
 data CallingMode = MajorityCalling | RandomCalling | RareCalling deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
             -- Chrom Pos Alleles Number_of_reads_per_individual
 data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show)
-data VCFheader = VCFheader [Text] [String] -- simple comment lines, sample names
+data VCFheader = VCFheader [Text] [String] deriving (Show)-- simple comment lines, sample names
 data SnpEntry = SnpEntry Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
 
 main :: IO ()
-main = OP.execParser parser >>= runWithOpts
+main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
   where
     parser = OP.info (OP.helper <*> argParser)
                      (OP.progDesc "A program to perform simple genotype calling directly from BAM")
@@ -122,65 +123,102 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
     parseSamtoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "samtools" <>
                                 OP.value "samtools" <> OP.showDefault <>
                                   OP.metavar "<SAMTOOLS_PATH>" <>
-                                  OP.help "path to the samtools-1.2 executable")
+                                  OP.help "path to the samtools executable, version >= 1.2")
     parseBcftoolsExe = OP.option (fromText . T.pack <$> OP.str) (OP.long "bcftools" <>
                                   OP.value "bcftools" <> OP.showDefault <>
                                   OP.metavar "<BCFTOOLS_PATH>" <> OP.help "path to the \
-                                  \bcftools-1.2 executable")
+                                  \bcftools executable, version >= 1.2")
     
-runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt mode seed minDepth transversionsOnly snpFile region outChrom reference 
-                     outFormat eigenStratOutPrefix samtools bcftools bamFiles) = do
+runWithOpts :: ReaderT ProgOpt (SafeT IO) ()
+runWithOpts = do
+    seed <- asks optSeed
+    region <- asks optRegion
+    outChrom <- asks optOutChrom
+    outFormat <- asks optOutFormat
+    eigenStratOutPrefix <- asks optEigenstratOutPrefix
     case seed of
         Nothing -> return ()
-        Just seed_ -> setStdGen $ mkStdGen seed_
+        Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
     let chrom = head (T.splitOn ":" region)
     let outputChrom = case outChrom of
             Nothing -> chrom
             Just label -> label
-    (vcfHeader, freqSumProducer) <- case snpFile of
-        Nothing -> do
-            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
-                              " | "%fp%" view -v snps -H") samtools reference region bams bcftools
-            vcfTextProd <- produceFromCommand cmd
-            (vcfHeader_, vcfProd) <- parseVCF vcfTextProd
-            let vcfProdPipe = vcfProd >-> processVcfSimple (length bamFiles) mode minDepth  
-                                          transversionsOnly
-            return (vcfHeader_, vcfProdPipe)
-        Just fn -> do
-            let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%
-                              " "%s%" | "%fp%" view -H") samtools reference region fn bams bcftools
-            vcfTextProd <- produceFromCommand cmd
-            let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
-            (vcfHeader_, vcfProd) <- parseVCF vcfTextProd
-            let snpProd =
-                    parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
-            let jointProd = orderedZip cmp snpProd vcfProd
-                jointProdPipe =
-                    jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth 
-                                                        transversionsOnly
-            return (vcfHeader_, fmap snd jointProdPipe)
+    (vcfHeader, freqSumProducer) <- runPileup
     case outFormat of
         FreqSumFormat -> do
             let VCFheader _ n = vcfHeader
-            putStrLn $ "#CHROM\tPOS\tREF\tALT\t" ++ (intercalate "\t" . map (++"(2)") $ n)
-            runSafeT . runEffect $ freqSumProducer >->
-                         P.map (showFreqSum outputChrom) >-> printToStdOut
+            liftIO . putStrLn $ "#CHROM\tPOS\tREF\tALT\t" ++ (intercalate "\t" . map (++"(2)") $ n)
+            lift . runEffect $ freqSumProducer >-> P.map (showFreqSum outputChrom) >-> printToStdOut
         EigenStrat -> case eigenStratOutPrefix of
-            Nothing -> throwIO $ AssertionFailed "need an eigenstratPrefix for EigenStratFormat"
+            Nothing -> liftIO . throwIO $ AssertionFailed "need an eigenstratPrefix for \
+                                                           \EigenStratFormat"
             Just fn -> do
                 let snpOut = fn <.> "snp.txt"
                     indOut = fn <.> "ind.txt"
-                withFile (T.unpack . format fp $ indOut) WriteMode $ \indOutHandle -> do
+                lift . withFile (T.unpack . format fp $ indOut) WriteMode $ \indOutHandle -> do
                     let VCFheader _ sampleNames = vcfHeader
-                    mapM_ (\n -> hPutStrLn indOutHandle (n ++ "\tU\tUnknown")) sampleNames
-                withFile (T.unpack . format fp $ snpOut) WriteMode $ \snpOutHandle ->
-                    runSafeT . runEffect $ freqSumProducer >->
-                    printEigenStrat outputChrom snpOutHandle >-> printToStdOut
+                    mapM_ (\n -> liftIO $ hPutStrLn indOutHandle (n ++ "\tU\tUnknown")) sampleNames
+                lift . withFile (T.unpack . format fp $ snpOut) WriteMode $ \snpOutHandle -> do
+                    runEffect $ freqSumProducer >->
+                                       printEigenStrat outputChrom snpOutHandle >->
+                                       printToStdOut
   where
-    bams = (T.intercalate " " (map (format fp) bamFiles))
-    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
     printToStdOut = for cat (liftIO . T.putStrLn)
+
+runPileup :: ReaderT ProgOpt (SafeT IO) (VCFheader, Producer FreqSumRow (SafeT IO) ())
+runPileup = do
+    snpFile <- asks optSnpFile
+    case snpFile of
+        Nothing -> runPileupSimple
+        Just fn -> runPileupSnpFile fn
+
+runPileupSimple :: ReaderT ProgOpt (SafeT IO) (VCFheader, Producer FreqSumRow (SafeT IO) ())
+runPileupSimple = do
+    samtools <- asks optSamtoolsExe
+    bcftools <- asks optBcftoolsExe
+    reference <- asks optReference
+    region <- asks optRegion
+    bamFiles <- asks optBamFiles
+    mode <- asks optCallingMode
+    minDepth <- asks optMinDepth
+    transversionsOnly <- asks optTransversionsOnly
+    let bams = (T.intercalate " " (map (format fp) bamFiles))
+    let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
+                      " | "%fp%" view -v snps") samtools reference region bams bcftools
+    vcfTextProd <- liftIO $ produceFromCommand cmd
+    (vcfHeader_, vcfProd) <- lift $ parseVCF vcfTextProd
+    let vcfProdPipe = vcfProd >-> processVcfSimple (length bamFiles) mode minDepth
+                                  transversionsOnly
+    return (vcfHeader_, vcfProdPipe)
+
+runPileupSnpFile :: FilePath ->
+                    ReaderT ProgOpt (SafeT IO) (VCFheader, Producer FreqSumRow (SafeT IO) ())
+runPileupSnpFile fn = do
+    samtools <- asks optSamtoolsExe
+    bcftools <- asks optBcftoolsExe
+    reference <- asks optReference
+    region <- asks optRegion
+    bamFiles <- asks optBamFiles
+    mode <- asks optCallingMode
+    minDepth <- asks optMinDepth
+    transversionsOnly <- asks optTransversionsOnly
+    let bams = (T.intercalate " " (map (format fp) bamFiles))
+    let chrom = head (T.splitOn ":" region)
+    let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%
+                      " "%s%" | "%fp%" view") samtools reference region fn bams bcftools
+    vcfTextProd <- liftIO $ produceFromCommand cmd
+    let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
+    (vcfHeader_, vcfProd) <- lift $ parseVCF vcfTextProd
+    let snpProd =
+            parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
+    let jointProd = orderedZip cmp snpProd vcfProd
+        jointProdPipe =
+            jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth
+                                                transversionsOnly
+    return (vcfHeader_, fmap snd jointProdPipe)
+  where
+    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
+    
 
 produceFromCommand :: Text -> IO (Producer Text (SafeT IO) ())
 produceFromCommand cmd = do
@@ -189,12 +227,15 @@ produceFromCommand cmd = do
     (p, _) <- pipeOutput Inherit Inherit createProcess
     return . void . decodeUtf8 $ p
 
-parseVCF :: Producer Text (SafeT IO) () -> IO (VCFheader, Producer VCFentry (SafeT IO) ())
+parseVCF :: Producer Text (SafeT IO) () -> SafeT IO (VCFheader, Producer VCFentry (SafeT IO) ())
 parseVCF prod = do
-    (res, rest) <- runSafeT $ runStateT (parse vcfHeaderParser) prod
+    (res, rest) <- runStateT (parse vcfHeaderParser) prod
     header <- case res of
-        Nothing -> throwIO $ AssertionFailed "vcf file exhausted"
-        Just (Left e_) -> throwIO $ AssertionFailed ("vcf file parsing error: " ++ show e_)
+        Nothing -> liftIO . throwIO $ AssertionFailed "vcf header not readible. VCF file empty?"
+        Just (Left e_) -> do
+            Right (chunk, _) <- next rest
+            let msg = show e_ ++ T.unpack chunk
+            liftIO . throwIO $ AssertionFailed ("VCF header parsing error: " ++ msg)
         Just (Right h) -> return h
     return (header, parsed vcfParser rest >>= liftErrors)
   where
@@ -239,7 +280,7 @@ vcfParser = do
     return $ VCFentry chrom pos (ref:filteredAlt) filteredCoverages
   where
     altAllele = Just <$> A.satisfy (A.inClass "ACTG")
-    xAllele = A.string "<X>" >> return Nothing
+    xAllele = (A.string "<X>" <|> A.string "<*>") >> return Nothing
     coverage = do
         _ <- A.decimal `A.sepBy1` (A.char ',') :: A.Parser [Int]
         _ <- A.char ':'
