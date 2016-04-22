@@ -25,7 +25,7 @@ import Pipes.Safe.Prelude (withFile)
 import Pipes.Text.Encoding (decodeUtf8)
 import qualified Pipes.Text.IO as PT
 import Prelude hiding (FilePath)
-import System.IO (IOMode(..), hPutStrLn, stderr, openFile)
+import System.IO (IOMode(..), hPutStrLn)
 import System.Random (randomRIO, mkStdGen, setStdGen)
 import System.Random.Shuffle (shuffleM)
 import Turtle hiding (tab, cat, stderr)
@@ -136,6 +136,7 @@ runWithOpts = do
     outChrom <- asks optOutChrom
     outFormat <- asks optOutFormat
     eigenStratOutPrefix <- asks optEigenstratOutPrefix
+    transversionsOnly <- asks optTransversionsOnly
     case seed of
         Nothing -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
@@ -148,7 +149,8 @@ runWithOpts = do
         FreqSumFormat -> do
             let VCFheader _ n = vcfHeader
             liftIO . putStrLn $ "#CHROM\tPOS\tREF\tALT\t" ++ (intercalate "\t" . map (++"(2)") $ n)
-            lift . runEffect $ freqSumProducer >-> P.map (showFreqSum outputChrom) >-> printToStdOut
+            lift . runEffect $ freqSumProducer >-> filterTransitions transversionsOnly >->
+                               P.map (showFreqSum outputChrom) >-> printToStdOut
         EigenStrat -> case eigenStratOutPrefix of
             Nothing -> liftIO . throwIO $ AssertionFailed "need an eigenstratPrefix for \
                                                            \EigenStratFormat"
@@ -159,12 +161,18 @@ runWithOpts = do
                     let VCFheader _ sampleNames = vcfHeader
                     mapM_ (\n -> liftIO $ hPutStrLn indOutHandle (n ++ "\tU\tUnknown")) sampleNames
                 lift . withFile (T.unpack . format fp $ snpOut) WriteMode $ \snpOutHandle -> do
-                    runEffect $ freqSumProducer >->
-                                       printEigenStrat outputChrom snpOutHandle >->
-                                       printToStdOut
+                    runEffect $ freqSumProducer >-> filterTransitions transversionsOnly >->
+                                printEigenStrat outputChrom snpOutHandle >-> printToStdOut
   where
     printToStdOut = for cat (liftIO . T.putStrLn)
-
+    filterTransitions transversionsOnly =
+        if transversionsOnly 
+        then P.filter (\(FreqSumRow _ _ ref alt _) -> isTransversion ref alt)
+        else cat
+    isTransversion ref alt = not $ isTransition ref alt
+    isTransition ref alt = ((ref == 'A') && (alt == 'G')) || ((ref == 'G') && (alt == 'A')) ||
+                           ((ref == 'C') && (alt == 'T')) || ((ref == 'T') && (alt == 'C'))
+    
 runPileup :: ReaderT ProgOpt (SafeT IO) (VCFheader, Producer FreqSumRow (SafeT IO) ())
 runPileup = do
     snpFile <- asks optSnpFile
@@ -181,14 +189,12 @@ runPileupSimple = do
     bamFiles <- asks optBamFiles
     mode <- asks optCallingMode
     minDepth <- asks optMinDepth
-    transversionsOnly <- asks optTransversionsOnly
     let bams = (T.intercalate " " (map (format fp) bamFiles))
     let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
                       " | "%fp%" view -v snps") samtools reference region bams bcftools
     vcfTextProd <- liftIO $ produceFromCommand cmd
     (vcfHeader_, vcfProd) <- lift $ parseVCF vcfTextProd
     let vcfProdPipe = vcfProd >-> processVcfSimple (length bamFiles) mode minDepth
-                                  transversionsOnly
     return (vcfHeader_, vcfProdPipe)
 
 runPileupSnpFile :: FilePath ->
@@ -201,7 +207,6 @@ runPileupSnpFile fn = do
     bamFiles <- asks optBamFiles
     mode <- asks optCallingMode
     minDepth <- asks optMinDepth
-    transversionsOnly <- asks optTransversionsOnly
     let bams = (T.intercalate " " (map (format fp) bamFiles))
     let chrom = head (T.splitOn ":" region)
     let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" -l "%fp%
@@ -212,9 +217,7 @@ runPileupSnpFile fn = do
     let snpProd =
             parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
     let jointProd = orderedZip cmp snpProd vcfProd
-        jointProdPipe =
-            jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth
-                                                transversionsOnly
+        jointProdPipe = jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth
     return (vcfHeader_, fmap snd jointProdPipe)
   where
     cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
@@ -292,8 +295,8 @@ word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
 tab :: A.Parser ()
 tab = A.char '\t' >> return ()
 
-processVcfSimple :: Int -> CallingMode -> Int -> Bool -> Pipe VCFentry FreqSumRow (SafeT IO) r
-processVcfSimple nrInds mode minDepth transversionsOnly = for cat $ \vcfEntry -> do
+processVcfSimple :: Int -> CallingMode -> Int -> Pipe VCFentry FreqSumRow (SafeT IO) r
+processVcfSimple nrInds mode minDepth = for cat $ \vcfEntry -> do
     let (VCFentry chrom pos alleles covNums) = vcfEntry
     when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number \
             \of genotypes. Check that bam files have different readgroup sample names")
@@ -311,18 +314,12 @@ processVcfSimple nrInds mode minDepth transversionsOnly = for cat $ \vcfEntry ->
                             (AssertionFailed "should not happen, altIndex==0")
             return ([head alleles, alt], [[c !! 0, c !! altIndex] | c <- covNums])
     let [ref, alt] = normalizedAlleles
-    when (ref /= 'N' && (not transversionsOnly || isTransversion ref alt)) $ do
+    when (ref /= 'N') $ do
         genotypes <- liftIO $ mapM (callGenotype mode minDepth) normalizedCovNums
         when (any (>0) genotypes) $ yield (FreqSumRow chrom pos ref alt genotypes)
   where
     shuffle list = evalRandIO (shuffleM list)
     
-isTransversion :: Char -> Char -> Bool
-isTransversion ref alt = not isTransition
-  where
-    isTransition = ((ref == 'A') && (alt == 'G')) || ((ref == 'G') && (alt == 'A')) ||
-                   ((ref == 'C') && (alt == 'T')) || ((ref == 'T') && (alt == 'C'))
-
 callGenotype :: CallingMode -> Int -> [Int] -> IO Int
 callGenotype mode minDepth covs = do
     if sum covs < minDepth then return (-1) else do
@@ -344,9 +341,9 @@ callGenotype mode minDepth covs = do
             _ -> throwIO (AssertionFailed "should not happen. CallGenotype called with more \
                                             \than two alleles")
 
-processVcfWithSnpFile :: Int -> CallingMode -> Int -> Bool -> Pipe (Maybe SnpEntry, Maybe VCFentry) 
-                                        FreqSumRow (SafeT IO) r
-processVcfWithSnpFile nrInds mode minDepth transversionsOnly = for cat $ \jointEntry -> do
+processVcfWithSnpFile :: Int -> CallingMode -> Int -> Pipe (Maybe SnpEntry, Maybe VCFentry) 
+                                                      FreqSumRow (SafeT IO) r
+processVcfWithSnpFile nrInds mode minDepth = for cat $ \jointEntry -> do
     -- trace (show jointEntry) (return ())
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
@@ -372,10 +369,7 @@ processVcfWithSnpFile nrInds mode minDepth transversionsOnly = for cat $ \jointE
                                         (map reverse normalizedVcfNums)
                     _ -> liftIO . throwIO $ AssertionFailed ("should not happen, can only have \
                                     \two alleles after normalization: " ++ show jointEntry)
-            case transversionsOnly of
-                False -> yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
-                True -> when (isTransversion snpRef snpAlt) $
-                                yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+            yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
         _ -> return ()
 
 snpParser :: A.Parser SnpEntry
