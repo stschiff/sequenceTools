@@ -1,8 +1,10 @@
+#!/usr/bin/env stack
+-- stack runghc --package turtle --package text
+
 {-# LANGUAGE OverloadedStrings #-}
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import Filesystem.Path.CurrentOS (encodeString)
 import Turtle
 import qualified System.IO as IO
 
@@ -10,7 +12,7 @@ main :: IO ()
 main = do
     snpFileName <- options "script to convert a vcf to eigenstrat format"
                    (argPath "snpFileName" "name of the SNP file")
-    IO.withFile (encodeString snpFileName) IO.WriteMode $ \snpFileH ->
+    IO.withFile (T.unpack . format fp $ snpFileName) IO.WriteMode $ \snpFileH ->
         foldIO (grep (prefix (notChar '#')) stdin) (mainFold snpFileH)
 
 mainFold :: IO.Handle -> FoldM IO Text ()
