@@ -1,5 +1,4 @@
 build/
 *.hi
 *.o
-vcf2eigenstrat
 .stack-work
