@@ -107,7 +107,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
     parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <> 
                                    OP.metavar "<REF>" <>
                                   OP.help "the reference fasta file")
-    parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE>" <>
+    parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE(S)>" <>
                                     OP.help "input file, give multiple files for multiple samples")
     parseFormat = OP.option OP.auto (OP.metavar "<OUT_FORMAT>" <> OP.long "format" <>
                                      OP.short 'o' <>
