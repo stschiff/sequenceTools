@@ -18,7 +18,7 @@ import qualified Pipes.Text.IO as PT
 import System.IO (IOMode(..), withFile, Handle)
 import Turtle.Format (format, d, s, (%))
 
-data ProgOpt = ProgOpt FilePath
+data ProgOpt = ProgOpt FilePath (Maybe FilePath)-- outPrefix SnpFile
 
 data VCFentry = VCFentry T.Text Int Char Char [Int] deriving (Show) -- chrom, pos, ref, alt, dosage
 data VCFheader = VCFheader [T.Text] [T.Text] deriving (Show)-- simple comment lines, sample names
