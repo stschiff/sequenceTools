@@ -38,7 +38,7 @@ main = do
                 Just outFormat -> content <|> return (format ("outputformat:\t"%w) outFormat)
                 Nothing -> content
         output paramFile content'
-        ec <- proc "smartpca" ["-p", format fp paramFile] empty
+        ec <- proc "mergeit" ["-p", format fp paramFile] empty
         case ec of
             ExitSuccess -> return ()
             ExitFailure n -> err $ format ("mergeit failed with exit code "%d) n

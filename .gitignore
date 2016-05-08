@@ -3,3 +3,5 @@ build/
 *.o
 .stack-work
 vcf2eigenstrat
+mergeit_wrapper
+smartpca_wrapper
