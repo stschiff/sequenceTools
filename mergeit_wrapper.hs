@@ -50,7 +50,8 @@ parser = Options <$> optPath "geno1" 'g' "First Genotype File"
                  <*> optPath "geno2" 'G' "Second Genotype File"
                  <*> optPath "snp2" 'S' "Second Snp File"
                  <*> optPath "ind2" 'I' "Second Ind File"
-                 <*> optPath "outPrefix" 'o' "Second Genotype File"
+                 <*> optPath "outPrefix" 'o' "Output prefix for *.geno, *.snp and *.ind \
+                                              \output files"
                  <*> optional (optRead "outFormat" 'f' "Output format. One of ANCESTRYMAP, \
                                \EIGENSTRAT, PED, PACKEDPED, PACKEDANCESTRYMAP. Default is \
                                \PACKEDANCESTRYMAP")
