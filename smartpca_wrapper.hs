@@ -25,7 +25,7 @@ main = do
                       return (format ("indivname:\t"%fp) (optInd args)) <|>
                       return (format ("evecoutname:\t"%fp%".evec.txt") (optOutPrefix args)) <|>
                       return (format ("evaloutname:\t"%fp%".eval.txt") (optOutPrefix args)) <|>
-                      if (optLSQproject args) then "lsqproject:\tYES" else "" <|>
+                      (if (optLSQproject args) then "lsqproject:\tYES" else "") <|>
                       case optPopList args of
                           Just popList -> return (format ("poplistname:\t"%fp) popList)
                           Nothing -> ""
