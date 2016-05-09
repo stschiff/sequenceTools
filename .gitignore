@@ -5,3 +5,4 @@ build/
 vcf2eigenstrat
 mergeit_wrapper
 smartpca_wrapper
+qp3Pop_wrapper
