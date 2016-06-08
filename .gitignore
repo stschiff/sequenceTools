@@ -2,7 +2,6 @@ build/
 *.hi
 *.o
 .stack-work
-vcf2eigenstrat
 mergeit_wrapper
 smartpca_wrapper
 qp3Pop_wrapper
