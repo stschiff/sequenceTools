@@ -140,26 +140,23 @@ vcfHeaderParser = VCFheader <$> A.many' doubleCommentLine <*> singleCommentLine
 vcfEntryParser :: A.Parser VCFentry
 vcfEntryParser = do
     chrom <- word
-    void tab
+    void A.space
     pos <- A.decimal
-    void tab
+    void A.space
     void word
-    void tab
+    void A.space
     ref <- allele
-    void tab
+    void A.space
     alt <- allele
-    void tab
-    void $ A.count 4 (word >> tab)
-    genotypes <- genotype `A.sepBy1` tab
+    void A.space
+    void $ A.count 4 (word >> A.space)
+    genotypes <- genotype `A.sepBy1` A.space
     void A.endOfLine
     return $ VCFentry chrom pos ref alt genotypes
   where
     allele = A.satisfy (\c -> c `elem` actg)
     actg :: String
     actg = "ACTG"
-
-tab :: A.Parser Char
-tab = A.char '\t'
 
 word :: A.Parser T.Text
 word = A.takeTill isSpace
@@ -217,18 +214,19 @@ processVcfWithSnpFile nrInds fillHomRef = for cat $ \jointEntry -> do
 
 snpParser :: A.Parser SnpEntry
 snpParser = do
-    _ <- word
-    tab
+    A.skipMany A.space
+    void word
+    A.skipMany1 A.space
     chrom <- word
-    tab
-    _ <- word
-    tab
+    A.skipMany1 A.space
+    void word
+    A.skipMany1 A.space
     pos <- A.decimal
-    tab
+    A.skipMany1 A.space
     ref <- A.satisfy (A.inClass "ACTG")
-    tab
+    A.skipMany1 A.space
     alt <- A.satisfy (A.inClass "ACTG")
-    _ <- A.satisfy (\c -> c == '\r' || c == '\n')
+    void A.endOfLine
     let ret = SnpEntry chrom pos ref alt
     return ret
 
