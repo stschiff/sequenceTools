@@ -9,7 +9,7 @@ category:            Bioinformatics
 build-type:          Simple
 cabal-version:       >=1.10
 
-executable simpleBamCaller
+executable vcf2eigenstrat
   main-is:             vcf2eigenstrat.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N2
   other-modules:       OrderedZip

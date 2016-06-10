@@ -72,7 +72,7 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
                                     OP.metavar "<CHROM>" <>
                                    OP.help "specify the output chromosome name" <> OP.value Nothing)
     parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <>
-                             OP.help "Remove transition SNPs from the output)")
+                             OP.help "Remove transition SNPs from the output")
     
 runMain :: ProgOpt -> IO ()
 runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversionsOnly) =
@@ -217,16 +217,18 @@ processVcfWithSnpFile nrInds fillHomRef = for cat $ \jointEntry -> do
 
 snpParser :: A.Parser SnpEntry
 snpParser = do
+    _ <- word
+    tab
     chrom <- word
     tab
+    _ <- word
     pos <- A.decimal
     tab
     ref <- A.satisfy (A.inClass "ACTG")
-    _ <- A.char ','
+    tab
     alt <- A.satisfy (A.inClass "ACTG")
     _ <- A.satisfy (\c -> c == '\r' || c == '\n')
     let ret = SnpEntry chrom pos ref alt
-    -- trace (show ret) $ return ()
     return ret
 
 runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer VCFentry m r
