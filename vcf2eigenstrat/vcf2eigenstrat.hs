@@ -222,6 +222,7 @@ snpParser = do
     chrom <- word
     tab
     _ <- word
+    tab
     pos <- A.decimal
     tab
     ref <- A.satisfy (A.inClass "ACTG")
