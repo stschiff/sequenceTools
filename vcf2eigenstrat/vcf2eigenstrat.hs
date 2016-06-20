@@ -223,9 +223,9 @@ snpParser = do
     A.skipMany1 A.space
     pos <- A.decimal
     A.skipMany1 A.space
-    ref <- A.satisfy (A.inClass "ACTG")
+    ref <- A.satisfy (A.inClass "ACTGX")
     A.skipMany1 A.space
-    alt <- A.satisfy (A.inClass "ACTG")
+    alt <- A.satisfy (A.inClass "ACTGX")
     void A.endOfLine
     let ret = SnpEntry chrom pos ref alt
     return ret
