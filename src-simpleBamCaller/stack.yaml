@@ -1,8 +1,0 @@
-flags: {}
-packages:
-- '.'
-- location:
-    git: https://github.com/Gabriel439/Haskell-Turtle-Library.git
-    commit: c341f941d32c5cc287818383a4dc5b5ab1d2ca4b
-extra-deps: []
-resolver: lts-3.8

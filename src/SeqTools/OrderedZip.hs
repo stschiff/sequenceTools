@@ -1,4 +1,4 @@
-module OrderedZip (orderedZip) where
+module SeqTools.OrderedZip (orderedZip) where
 
 import Pipes (Producer, next, yield, lift)
 
