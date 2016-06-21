@@ -33,8 +33,6 @@ data ProgOpt = ProgOpt {
     optTransversionsOnly :: Bool
 }
 
-data VCFheader = VCFheader [T.Text] [T.Text] deriving (Show)-- simple comment lines, sample names
-data VCFentry = VCFentry T.Text Int Char Char [Int] deriving (Show) -- chrom, pos, ref, alt, dosages
 data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
 
 main :: IO ()
@@ -103,73 +101,6 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
     isTransversion ref alt = not $ isTransition ref alt
     isTransition ref alt = ((ref == 'A') && (alt == 'G')) || ((ref == 'G') && (alt == 'A')) ||
                            ((ref == 'C') && (alt == 'T')) || ((ref == 'T') && (alt == 'C'))
-
-readVCF :: (MonadIO m) => m (VCFheader, Producer VCFentry m ())
-readVCF = do
-    (res, rest) <- runStateT (parse vcfHeaderParser) PT.stdin
-    header <- case res of
-        Nothing -> liftIO . throwIO $ AssertionFailed "vcf header not readible. VCF file empty?"
-        Just (Left e_) -> do
-            Right (chunk, _) <- next rest
-            let msg = show e_ ++ T.unpack chunk
-            liftIO . throwIO $ AssertionFailed ("VCF header parsing error: " ++ msg)
-        Just (Right h) -> return h
-    return (header, parsed vcfEntryParser rest >>= liftErrors)
-
-liftErrors :: (MonadIO m) => Either (ParsingError, Producer T.Text m r) () -> Producer a m ()
-liftErrors res = case res of
-    Left (e_, prod_) -> do
-        Right (chunk, _) <- lift $ next prod_
-        let msg = show e_ ++ T.unpack chunk
-        lift . liftIO . throwIO $ AssertionFailed msg
-    Right () -> return ()
-
-vcfHeaderParser :: A.Parser VCFheader
-vcfHeaderParser = VCFheader <$> A.many' doubleCommentLine <*> singleCommentLine
-  where
-    doubleCommentLine = do
-        c1 <- A.string "##"
-        s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
-        return $ T.append c1 s_
-    singleCommentLine = do
-        void $ A.char '#'
-        s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
-        let fields = T.splitOn "\t" s_
-        return . drop 9 $ fields
-
-vcfEntryParser :: A.Parser VCFentry
-vcfEntryParser = do
-    chrom <- word
-    void A.space
-    pos <- A.decimal
-    void A.space
-    void word
-    void A.space
-    ref <- allele
-    void A.space
-    alt <- allele
-    void A.space
-    void $ A.count 4 (word >> A.space)
-    genotypes <- genotype `A.sepBy1` A.space
-    void A.endOfLine
-    return $ VCFentry chrom pos ref alt genotypes
-  where
-    allele = A.satisfy (\c -> c `elem` actg)
-    actg :: String
-    actg = "ACTG"
-
-word :: A.Parser T.Text
-word = A.takeTill isSpace
-
-genotype :: A.Parser Int
-genotype = do
-    gen1 <- (A.char '0' <|> A.char '1' <|> A.char '.')
-    void (A.char '/' <|> A.char '|')
-    gen2 <- (A.char '0' <|> A.char '1' <|> A.char '.')
-    _ <- A.takeTill (\a -> (a `elem` ['\r', '\t', '\n', ' ']))
-    if   gen1 == '.' || gen2 == '.'
-    then return (-1) 
-    else return . length . filter (=='1') $ [gen1, gen2]
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> String -> FilePath -> 
                                           Bool -> Producer VCFentry m r
