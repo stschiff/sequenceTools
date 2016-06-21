@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import OrderedZip (orderedZip)
+import SeqTools.OrderedZip (orderedZip)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad.Random (evalRandIO)

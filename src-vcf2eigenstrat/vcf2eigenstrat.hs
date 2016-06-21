@@ -1,13 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import OrderedZip (orderedZip)
+import SeqTools.OrderedZip (orderedZip)
+import SeqTools.VCF (readVCF, VCFheader(..), VCFentry(..), SimpleVCFentry(..),
+                     isBiallelicSnp, isTransversionSnp, liftParsingErrors, getDosages,
+                     makeSimpleVCFentry)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
-import Control.Applicative ((<|>))
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO, MonadIO)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State.Strict (runStateT)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace)
 import Data.Monoid ((<>))
@@ -15,23 +15,16 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 -- import Debug.Trace (trace)
 import qualified Options.Applicative as OP
-import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat, next)
-import Pipes.Attoparsec (parsed, parse, ParsingError)
+import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
+import Pipes.Attoparsec (parsed)
 import qualified Pipes.Prelude as P
-import Pipes.Safe (runSafeT, SafeT, MonadSafe)
+import Pipes.Safe (runSafeT, MonadSafe)
 import qualified Pipes.Safe.Prelude as S
 import qualified Pipes.Text.IO as PT
-import System.IO (IOMode(..), withFile, Handle)
+import System.IO (IOMode(..), Handle)
 import Turtle.Format (format, d, s, (%))
 
-data ProgOpt = ProgOpt {
-    optSnpPosFile :: Maybe FilePath,
-    optFillHomRef :: Bool,
-    optOutPrefix :: FilePath,
-    optChrom :: String,
-    optOutChrom :: Maybe String,
-    optTransversionsOnly :: Bool
-}
+data ProgOpt = ProgOpt (Maybe FilePath) Bool FilePath String (Maybe String) Bool
 
 data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
 
@@ -83,65 +76,70 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
         S.withFile indOut WriteMode $ \indOutHandle -> do
             forM_ sampleNames $ \n -> do
                 liftIO . T.hPutStrLn indOutHandle . T.intercalate "\t" $ [n, "U", "Unknown"]
+        let vcfBodyBiAllelic = vcfBody >-> P.filter (\e -> isBiallelicSnp (vcfRef e) (vcfAlt e))
         let vcfProducer = case snpPosFile of
-                Just fn -> runJointly vcfBody nrInds chrom fn fillHomRef
-                Nothing -> runSimple vcfBody chrom
+                Just fn -> runJointly vcfBodyBiAllelic nrInds chrom fn fillHomRef
+                Nothing -> runSimple vcfBodyBiAllelic chrom
         let outChrom = case maybeOutChrom of
                 Just c -> c
                 Nothing -> chrom
         let eigenStratPipe = S.withFile snpOut WriteMode (printEigenStrat outChrom)
-        runEffect $
-            vcfProducer >-> filterTransitions transversionsOnly >-> eigenStratPipe >-> printToStdOut
+        runEffect $ vcfProducer >-> filterTransitions >-> eigenStratPipe >-> printToStdOut
   where
     printToStdOut = for cat (liftIO . T.putStrLn)
-    filterTransitions transversionsOnly =
-        if transversionsOnly 
-        then P.filter (\(VCFentry _ _ ref alt _) -> isTransversion ref alt)
-        else cat
-    isTransversion ref alt = not $ isTransition ref alt
-    isTransition ref alt = ((ref == 'A') && (alt == 'G')) || ((ref == 'G') && (alt == 'A')) ||
-                           ((ref == 'C') && (alt == 'T')) || ((ref == 'T') && (alt == 'C'))
+    filterTransitions = if transversionsOnly
+                        then P.filter (\e -> isTransversionSnp (sVCFref e) (sVCFalt e))
+                        else cat
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> String -> FilePath -> 
-                                          Bool -> Producer VCFentry m r
+                                          Bool -> Producer SimpleVCFentry m r
 runJointly vcfBody nrInds chrom snpPosFile fillHomRef =
     let snpProd = parsed snpParser (PT.readFile snpPosFile) >->
-                  P.filter (\(SnpEntry c _ _ _) -> c == T.pack chrom) >>= liftErrors
+                  P.filter (\(SnpEntry c _ _ _) -> c == T.pack chrom) >>= liftParsingErrors
         jointProd = snd <$> orderedZip cmp snpProd vcfBody
     in  jointProd >-> processVcfWithSnpFile nrInds fillHomRef
   where
-    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _ _) = snpPos `compare` vcfPos
+    cmp (SnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
 
 processVcfWithSnpFile :: (MonadIO m) => Int -> Bool ->
-                         Pipe (Maybe SnpEntry, Maybe VCFentry) VCFentry m r
+                         Pipe (Maybe SnpEntry, Maybe VCFentry) SimpleVCFentry m r
 processVcfWithSnpFile nrInds fillHomRef = for cat $ \jointEntry -> do
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
-            let dosages = if fillHomRef then replicate nrInds 0 else replicate nrInds (-1)
-            yield $ VCFentry snpChrom snpPos snpRef snpAlt dosages
-        (Just (SnpEntry snpChrom snpPos snpRef snpAlt),
-         Just (VCFentry vcfChrom _ vcfRef vcfAlt vcfNums)) -> do
-            when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent \ 
+            let dosages = if fillHomRef
+                          then replicate nrInds (Just 0)
+                          else replicate nrInds Nothing
+            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef) [T.singleton snpAlt]
+                                   dosages
+        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
+            dosages <- case getDosages vcfEntry of
+                Right dos -> return dos
+                Left err -> liftIO . throwIO $ AssertionFailed err
+            when (length dosages /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent \ 
                             \number of genotypes. Check that bam files have different \
                             \readgroup sample names")
-            when (snpChrom /= vcfChrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome \
-                                            \name in VCF")
+            when (snpChrom /= vcfChrom vcfEntry) $ do
+                liftIO . throwIO $ AssertionFailed "wrong chromosome name in VCF"
             let normalizedDosages =
-                    if (vcfRef, vcfAlt) == (snpRef, snpAlt)
-                    then vcfNums
-                    else
-                        if (vcfRef, vcfAlt) == (snpAlt, snpRef)
-                        then map flipDosages vcfNums
-                        else
-                            replicate nrInds (-1)
-            yield (VCFentry snpChrom snpPos snpRef snpAlt normalizedDosages)
+                    case vcfAlt vcfEntry of
+                        [alt] -> if (vcfRef vcfEntry, alt) ==
+                                        (T.singleton snpRef, T.singleton snpAlt)
+                                 then dosages
+                                 else
+                                     if (vcfRef vcfEntry, alt) ==
+                                             (T.singleton snpAlt, T.singleton snpRef)
+                                     then map flipDosages dosages
+                                     else replicate nrInds Nothing
+                        _ -> replicate nrInds Nothing
+            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef) [T.singleton snpAlt]
+                                   normalizedDosages
         _ -> return ()
   where
-    flipDosages d = case d of
-        0 -> 2
-        1 -> 1
-        2 -> 0
-        -1 -> -1
+    flipDosages dos = case dos of
+        Just 0 -> Just 2
+        Just 1 -> Just 1
+        Just 2 -> Just 0
+        _ -> Nothing
 
 snpParser :: A.Parser SnpEntry
 snpParser = do
@@ -160,24 +158,27 @@ snpParser = do
     void A.endOfLine
     let ret = SnpEntry chrom pos ref alt
     return ret
+  where
+    word = A.takeTill isSpace
 
-runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer VCFentry m r
-runSimple vcfBody chrom = for vcfBody $ \v@(VCFentry vcfChrom pos ref alt dosages) -> do
-    when (vcfChrom /= T.pack chrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome in VCF")
-    yield v
+runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer SimpleVCFentry m r
+runSimple vcfBody chrom = for vcfBody $ \e -> do
+    when (vcfChrom e /= T.pack chrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome in VCF")
+    case makeSimpleVCFentry e of
+        Right e' -> yield e'
+        Left err -> (liftIO . throwIO) (AssertionFailed err)
 
-printEigenStrat :: (MonadIO m) => String -> Handle -> Pipe VCFentry T.Text m r
-printEigenStrat outChrom snpOutHandle = for cat $ \(VCFentry chrom pos ref alt dosages) -> do
+printEigenStrat :: (MonadIO m) => String -> Handle -> Pipe SimpleVCFentry T.Text m r
+printEigenStrat outChrom snpOutHandle = for cat $ \(SimpleVCFentry _ pos ref alt dosages) -> do
     let n = format (s%"_"%d) (T.pack outChrom) pos
-        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n (T.pack outChrom) pos
-                         (T.singleton ref) (T.singleton alt)
+        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n (T.pack outChrom) pos ref (head alt)
     liftIO . T.hPutStrLn snpOutHandle $ snpLine
     yield . T.concat . map (format d . toEigenStratNum) $ dosages
   where
-    toEigenStratNum :: Int -> Int
+    toEigenStratNum :: Maybe Int -> Int
     toEigenStratNum c = case c of
-        0 -> 2
-        1 -> 1
-        2 -> 0
-        -1 -> 9
+        Just 0 -> 2
+        Just 1 -> 1
+        Just 2 -> 0
+        Nothing -> 9
         _ -> error ("unknown dosage " ++ show c)

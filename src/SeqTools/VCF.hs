@@ -1,15 +1,31 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module SeqTools.VCF (VCFheader(..),
                      VCFentry(..),
+                     SimpleVCFentry(..),
                      readVCF,
                      vcfHeaderParser,
                      vcfEntryParser,
                      getGenotypes,
                      getDosages,
-                     isBiallelicSnp) where
+                     isTransversionSnp,
+                     makeSimpleVCFentry,
+                     isBiallelicSnp,
+                     liftParsingErrors) where
 
-{-# LANGUAGE OverloadedStrings #-}
-
-import Data.Text (Text, count)
+import Control.Applicative ((<|>), empty)
+import Control.Error (headErr)
+import Control.Exception.Base (throwIO, AssertionFailed(..))
+import Control.Monad (void)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.State.Strict (runStateT)
+import qualified Data.Attoparsec.Text as A
+import Data.Char (isSpace)
+import Data.Text (Text, count, unpack, append, splitOn)
+import Pipes (Producer, next)
+import Pipes.Attoparsec (parse, parsed, ParsingError(..))
+import qualified Pipes.Text.IO as PT
 
 data VCFheader = VCFheader {
     vcfHeaderComments :: [Text],
@@ -19,14 +35,22 @@ data VCFheader = VCFheader {
 data VCFentry = VCFentry {
     vcfChrom :: Text,
     vcfPos :: Int,
-    vcfId :: Text,
+    vcfId :: Maybe Text,
     vcfRef :: Text,
     vcfAlt :: [Text],
     vcfQual :: Double,
-    vcfFilter :: Text,
+    vcfFilter :: Maybe Text,
     vcfInfo :: [(Text, Text)],
     vcfFormatString :: [Text],
     vcfGenotypeInfo :: [[Text]]
+}
+
+data SimpleVCFentry = SimpleVCFentry {
+    sVCFchrom :: Text,
+    sVCFpos :: Int,
+    sVCFref :: Text,
+    sVCFalt :: [Text],
+    sVCFdosages :: [Maybe Int]
 }
 
 readVCF :: (MonadIO m) => m (VCFheader, Producer VCFentry m ())
@@ -36,16 +60,16 @@ readVCF = do
         Nothing -> liftIO . throwIO $ AssertionFailed "vcf header not readible. VCF file empty?"
         Just (Left e_) -> do
             Right (chunk, _) <- next rest
-            let msg = show e_ ++ T.unpack chunk
+            let msg = show e_ ++ unpack chunk
             liftIO . throwIO $ AssertionFailed ("VCF header parsing error: " ++ msg)
         Just (Right h) -> return h
-    return (header, parsed vcfEntryParser rest >>= liftErrors)
+    return (header, parsed vcfEntryParser rest >>= liftParsingErrors)
 
-liftErrors :: (MonadIO m) => Either (ParsingError, Producer T.Text m r) () -> Producer a m ()
-liftErrors res = case res of
+liftParsingErrors :: (MonadIO m) => Either (ParsingError, Producer Text m r) () -> Producer a m ()
+liftParsingErrors res = case res of
     Left (e_, prod_) -> do
         Right (chunk, _) <- lift $ next prod_
-        let msg = show e_ ++ T.unpack chunk
+        let msg = show e_ ++ unpack chunk
         lift . liftIO . throwIO $ AssertionFailed msg
     Right () -> return ()
 
@@ -55,41 +79,67 @@ vcfHeaderParser = VCFheader <$> A.many' doubleCommentLine <*> singleCommentLine
     doubleCommentLine = do
         c1 <- A.string "##"
         s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
-        return $ T.append c1 s_
+        return $ append c1 s_
     singleCommentLine = do
         void $ A.char '#'
         s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
-        let fields = T.splitOn "\t" s_
+        let fields = splitOn "\t" s_
         return . drop 9 $ fields
 
 vcfEntryParser :: A.Parser VCFentry
-vcfEntryParser = VCFentry <$> word <* A.space <*> A.decimal <* A.space <*> word <* A.space <*> 
-                              alternativeAlleles <* A.space <*> A.double <* A.space <*> word <*
-                              A.space <*> infoFields <* A.space <*> formatStrings <* A.space <*>
-                              genotypeInfos <* A.endOfLine
+vcfEntryParser = VCFentry <$> word <* A.space <*> A.decimal <* A.space <*> parseId <* A.space <*> 
+                              word <* A.space <*> parseAlternativeAlleles <* A.space <*>
+                              A.double <* A.space <*> 
+                              parseFilter <* A.space <*> parseInfoFields <* A.space <*> 
+                              parseFormatStrings <* A.space <*> parseGenotypeInfos <* A.endOfLine
   where
     word = A.takeTill isSpace
-    alternativeAlleles = word `A.sepBy1` A.char ','
-    infoFields = infoField `A.sepBy1` A.char ';'
-    infoField = (,) <$> word <* A.char '=' <*> word
-    formatStrings = word `A.sepBy` A.char ':'
-    genotypeInfos = genotype `A.sepBy1` A.space
-    genotype = word `A.sepBy1` ':'
+    parseId = parseDot <|> (Just <$> word)
+    parseDot = A.char '.' *> empty
+    parseAlternativeAlleles = parseDot <|> (word `A.sepBy1` A.char ',')
+    parseFilter = parseDot <|> (Just <$> word)
+    parseInfoFields = parseDot <|> (parseInfoField `A.sepBy1` A.char ';')
+    parseInfoField = (,) <$> word <* A.char '=' <*> word
+    parseFormatStrings = word `A.sepBy1` A.char ':'
+    parseGenotypeInfos = parseGenotype `A.sepBy1` A.space
+    parseGenotype = word `A.sepBy1` A.char ':'
 
-isBiallelicSnp :: VCFentry -> Bool
-isBiallelicSnp vcfEntry = validRef && validAlt
+isBiallelicSnp :: Text -> [Text] -> Bool
+isBiallelicSnp ref alt = validRef && validAlt
   where
-    validRef = (vcfRef vcfEntry `elem` "ACTG")
-    validAlt = length (vcfAlt vcfEntry) == 1 && head (vcfAlt vcfEntry) `elem` "ACTG"
+    validRef = (ref `elem` ["A", "C", "G", "T"])
+    validAlt = case alt of
+        [alt'] -> alt' `elem` ["A", "C", "G", "T"]
+        _ -> False
+
+isTransversionSnp :: Text -> [Text] -> Bool
+isTransversionSnp ref alt =
+    case alt of
+        [alt'] -> isBiallelicSnp ref alt && (not $ isTransition ref alt')
+        _ -> False
+  where
+    isTransition r a = ((r == "A") && (a == "G")) || ((r == "G") && (a == "A")) ||
+                       ((r == "C") && (a == "T")) || ((r == "T") && (a == "C"))
 
 getGenotypes :: VCFentry -> Either String [Text]
 getGenotypes vcfEntry = do
-    gtIndex <- fst <$> tryHead "GT format field not found" . filter ((=="GT") . snd) . zip [0..] . 
-                       vcfFormatString $ vcfEntry
+    gtIndex <- fmap fst . headErr "GT format field not found" . filter ((=="GT") . snd) .
+               zip [0..] . vcfFormatString $ vcfEntry
     return $ map (!!gtIndex) (vcfGenotypeInfo vcfEntry)
 
-getDosages :: VCFentry -> Either String [Int]
+getDosages :: VCFentry -> Either String [Maybe Int]
 getDosages vcfEntry = do
     genotypes <- getGenotypes vcfEntry
-    return $ map (count "1") genotypes
+    let dosages = do
+            gen <- genotypes
+            case gen of
+                "." -> return Nothing
+                genString -> return . Just $ count "1" genString
+    return dosages
 
+makeSimpleVCFentry :: VCFentry -> Either String SimpleVCFentry
+makeSimpleVCFentry vcfEntry = do
+    dosages <- getDosages vcfEntry
+    return $ SimpleVCFentry (vcfChrom vcfEntry) (vcfPos vcfEntry) (vcfRef vcfEntry)
+                            (vcfAlt vcfEntry) dosages
+    
