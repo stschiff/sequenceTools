@@ -67,29 +67,31 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
     
 runMain :: ProgOpt -> IO ()
 runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversionsOnly) =
-    runSafeT $ do
+    -- runSafeT $ do
+    do
         (vcfHeader, vcfBody) <- readVCF
-        let snpOut = outPrefix ++ ".snp.txt"
-            indOut = outPrefix ++ ".ind.txt"
-            VCFheader _ sampleNames = vcfHeader
-            nrInds = length sampleNames
-        S.withFile indOut WriteMode $ \indOutHandle -> do
-            forM_ sampleNames $ \n -> do
-                liftIO . T.hPutStrLn indOutHandle . T.intercalate "\t" $ [n, "U", "Unknown"]
-        let vcfBodyBiAllelic = vcfBody >-> P.filter (\e -> isBiallelicSnp (vcfRef e) (vcfAlt e))
-        let vcfProducer = case snpPosFile of
-                Just fn -> runJointly vcfBodyBiAllelic nrInds chrom fn fillHomRef
-                Nothing -> runSimple vcfBodyBiAllelic chrom
-        let outChrom = case maybeOutChrom of
-                Just c -> c
-                Nothing -> chrom
-        let eigenStratPipe = S.withFile snpOut WriteMode (printEigenStrat outChrom)
-        runEffect $ vcfProducer >-> filterTransitions >-> eigenStratPipe >-> printToStdOut
-  where
-    printToStdOut = for cat (liftIO . T.putStrLn)
-    filterTransitions = if transversionsOnly
-                        then P.filter (\e -> isTransversionSnp (sVCFref e) (sVCFalt e))
-                        else cat
+        runEffect $ vcfBody >-> P.map show >-> P.stdoutLn
+        -- let snpOut = outPrefix ++ ".snp.txt"
+        --     indOut = outPrefix ++ ".ind.txt"
+        --     VCFheader _ sampleNames = vcfHeader
+        --     nrInds = length sampleNames
+        -- S.withFile indOut WriteMode $ \indOutHandle -> do
+        --     forM_ sampleNames $ \n -> do
+        --         liftIO . T.hPutStrLn indOutHandle . T.intercalate "\t" $ [n, "U", "Unknown"]
+        -- let vcfBodyBiAllelic = vcfBody -- >-> P.filter (\e -> isBiallelicSnp (vcfRef e) (vcfAlt e))
+        -- let vcfProducer = case snpPosFile of
+        --         Just fn -> runJointly vcfBodyBiAllelic nrInds chrom fn fillHomRef
+        --         Nothing -> runSimple vcfBodyBiAllelic chrom
+        -- let outChrom = case maybeOutChrom of
+        --         Just c -> c
+        --         Nothing -> chrom
+        -- let eigenStratPipe = S.withFile snpOut WriteMode (printEigenStrat outChrom)
+        -- runEffect $ vcfProducer >-> filterTransitions >-> eigenStratPipe >-> printToStdOut
+  -- where
+  --   printToStdOut = for cat (liftIO . T.putStrLn)
+  --   filterTransitions = if transversionsOnly
+  --                       then P.filter (\e -> isTransversionSnp (sVCFref e) (sVCFalt e))
+  --                       else cat
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> String -> FilePath -> 
                                           Bool -> Producer SimpleVCFentry m r
@@ -104,6 +106,7 @@ runJointly vcfBody nrInds chrom snpPosFile fillHomRef =
 processVcfWithSnpFile :: (MonadIO m) => Int -> Bool ->
                          Pipe (Maybe SnpEntry, Maybe VCFentry) SimpleVCFentry m r
 processVcfWithSnpFile nrInds fillHomRef = for cat $ \jointEntry -> do
+    liftIO $ print jointEntry
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
             let dosages = if fillHomRef
@@ -165,7 +168,9 @@ runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer SimpleVC
 runSimple vcfBody chrom = for vcfBody $ \e -> do
     when (vcfChrom e /= T.pack chrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome in VCF")
     case makeSimpleVCFentry e of
-        Right e' -> yield e'
+        Right e' -> do
+            liftIO $ print e'
+            yield e'
         Left err -> (liftIO . throwIO) (AssertionFailed err)
 
 printEigenStrat :: (MonadIO m) => String -> Handle -> Pipe SimpleVCFentry T.Text m r

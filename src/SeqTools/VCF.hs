@@ -30,7 +30,7 @@ import qualified Pipes.Text.IO as PT
 data VCFheader = VCFheader {
     vcfHeaderComments :: [Text],
     vcfSampleNames :: [Text]
-}
+} deriving (Show)
 
 data VCFentry = VCFentry {
     vcfChrom :: Text,
@@ -43,7 +43,7 @@ data VCFentry = VCFentry {
     vcfInfo :: [(Text, Text)],
     vcfFormatString :: [Text],
     vcfGenotypeInfo :: [[Text]]
-}
+} deriving (Show)
 
 data SimpleVCFentry = SimpleVCFentry {
     sVCFchrom :: Text,
@@ -51,7 +51,7 @@ data SimpleVCFentry = SimpleVCFentry {
     sVCFref :: Text,
     sVCFalt :: [Text],
     sVCFdosages :: [Maybe Int]
-}
+} deriving (Show)
 
 readVCF :: (MonadIO m) => m (VCFheader, Producer VCFentry m ())
 readVCF = do
@@ -69,7 +69,7 @@ liftParsingErrors :: (MonadIO m) => Either (ParsingError, Producer Text m r) () 
 liftParsingErrors res = case res of
     Left (e_, prod_) -> do
         Right (chunk, _) <- lift $ next prod_
-        let msg = show e_ ++ unpack chunk
+        let msg = show e_ ++ "\n" ++ unpack chunk
         lift . liftIO . throwIO $ AssertionFailed msg
     Right () -> return ()
 
@@ -87,22 +87,24 @@ vcfHeaderParser = VCFheader <$> A.many' doubleCommentLine <*> singleCommentLine
         return . drop 9 $ fields
 
 vcfEntryParser :: A.Parser VCFentry
-vcfEntryParser = VCFentry <$> word <* A.space <*> A.decimal <* A.space <*> parseId <* A.space <*> 
-                              word <* A.space <*> parseAlternativeAlleles <* A.space <*>
-                              A.double <* A.space <*> 
-                              parseFilter <* A.space <*> parseInfoFields <* A.space <*> 
-                              parseFormatStrings <* A.space <*> parseGenotypeInfos <* A.endOfLine
+vcfEntryParser = VCFentry <$> word <* sp <*> A.decimal <* sp <*> parseId <* sp <*> word <* sp <*>
+                              parseAlternativeAlleles <* sp <*> A.double <* sp <*>
+                              parseFilter <* sp <*> parseInfoFields <* sp <*>
+                              parseFormatStrings <* sp <*> parseGenotypeInfos <* A.endOfLine
   where
-    word = A.takeTill isSpace
+    word = A.takeTill A.isHorizontalSpace
+    sp = A.satisfy A.isHorizontalSpace
     parseId = parseDot <|> (Just <$> word)
     parseDot = A.char '.' *> empty
     parseAlternativeAlleles = parseDot <|> (word `A.sepBy1` A.char ',')
     parseFilter = parseDot <|> (Just <$> word)
     parseInfoFields = parseDot <|> (parseInfoField `A.sepBy1` A.char ';')
-    parseInfoField = (,) <$> word <* A.char '=' <*> word
-    parseFormatStrings = word `A.sepBy1` A.char ':'
-    parseGenotypeInfos = parseGenotype `A.sepBy1` A.space
-    parseGenotype = word `A.sepBy1` A.char ':'
+    parseInfoField = (,) <$> A.takeTill (=='=') <* A.char '=' <*>
+                             A.takeTill (\c -> c == ';' || A.isHorizontalSpace c)
+    parseFormatStrings = A.takeTill (\c -> c == ':' || A.isHorizontalSpace c) `A.sepBy1` A.char ':'
+    parseGenotypeInfos = parseGenotype `A.sepBy1` (A.satisfy A.isHorizontalSpace)
+    parseGenotype = parseGenoField `A.sepBy1` (A.char ':')
+    parseGenoField = A.takeTill (\c -> c == ':' || isSpace c) 
 
 isBiallelicSnp :: Text -> [Text] -> Bool
 isBiallelicSnp ref alt = validRef && validAlt
