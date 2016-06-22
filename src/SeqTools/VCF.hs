@@ -25,7 +25,6 @@ import Data.Char (isSpace)
 import Data.Text (Text, count, unpack, append, splitOn)
 import Pipes (Producer, next)
 import Pipes.Attoparsec (parse, parsed, ParsingError(..))
-import qualified Pipes.Text.IO as PT
 
 data VCFheader = VCFheader {
     vcfHeaderComments :: [Text],
@@ -53,9 +52,9 @@ data SimpleVCFentry = SimpleVCFentry {
     sVCFdosages :: [Maybe Int]
 } deriving (Show)
 
-readVCF :: (MonadIO m) => m (VCFheader, Producer VCFentry m ())
-readVCF = do
-    (res, rest) <- runStateT (parse vcfHeaderParser) PT.stdin
+readVCF :: (MonadIO m) => Producer Text m () -> m (VCFheader, Producer VCFentry m ())
+readVCF prod = do
+    (res, rest) <- runStateT (parse vcfHeaderParser) prod
     header <- case res of
         Nothing -> liftIO . throwIO $ AssertionFailed "vcf header not readible. VCF file empty?"
         Just (Left e_) -> do

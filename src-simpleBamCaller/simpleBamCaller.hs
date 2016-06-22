@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import SeqTools.OrderedZip (orderedZip)
+import SeqTools.VCF (readVCF, VCFheader(..), VCFentry(..))
 
+import Control.Error (headErr)
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad.Random (evalRandIO)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
-import Control.Monad.Trans.State.Strict (runStateT)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace)
-import Data.List (sortBy, intercalate)
-import Data.Maybe (catMaybes)
+import Data.List (sortBy)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 -- import Debug.Trace (trace)
 import qualified Options.Applicative as OP
-import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat, next)
-import Pipes.Attoparsec (parsed, parse)
+import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
+import Pipes.Attoparsec (parsed)
 import Pipes.Cliff (CreateProcess(..), CmdSpec(..), pipeOutput, NonPipe(..))
 import Pipes.Cliff.Core (defaultHandler)
 import qualified Pipes.Prelude as P
@@ -25,7 +25,7 @@ import Pipes.Safe.Prelude (withFile)
 import Pipes.Text.Encoding (decodeUtf8)
 import qualified Pipes.Text.IO as PT
 import Prelude hiding (FilePath)
-import System.IO (IOMode(..), hPutStrLn)
+import System.IO (IOMode(..))
 import System.Random (randomRIO, mkStdGen, setStdGen)
 import System.Random.Shuffle (shuffleM)
 import Turtle hiding (tab, cat, stderr)
@@ -48,11 +48,9 @@ data ProgOpt = ProgOpt {
 
 data CallingMode = MajorityCalling | RandomCalling | RareCalling deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
-data FreqSumRow = FreqSumRow Text Int Char Char [Int] deriving (Show)
-            -- Chrom Pos Alleles Number_of_reads_per_individual
-data VCFentry = VCFentry Text Int [Char] [[Int]] deriving (Show)
-data VCFheader = VCFheader [Text] [String] deriving (Show)-- simple comment lines, sample names
-data SnpEntry = SnpEntry Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
+data VCFentryReduced = VCFentryReduced T.Text Int [T.Text] [[Int]] deriving (Show)
+data FreqSumRow = FreqSumRow T.Text Int T.Text T.Text [Int] deriving (Show)
+data SnpEntry = SnpEntry T.Text Int T.Text T.Text deriving (Show)-- Chrom Pos Ref Alt
 
 main :: IO ()
 main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
@@ -148,7 +146,8 @@ runWithOpts = do
     case outFormat of
         FreqSumFormat -> do
             let VCFheader _ n = vcfHeader
-            liftIO . putStrLn $ "#CHROM\tPOS\tREF\tALT\t" ++ (intercalate "\t" . map (++"(2)") $ n)
+            echo $ format ("#CHROM\tPOS\tREF\tALT\t"%s)
+                          (T.intercalate "\t" . map (format (s%"(2)")) $ n)
             lift . runEffect $ freqSumProducer >-> filterTransitions transversionsOnly >->
                                P.map (showFreqSum outputChrom) >-> printToStdOut
         EigenStrat -> case eigenStratOutPrefix of
@@ -159,7 +158,8 @@ runWithOpts = do
                     indOut = fn <.> "ind.txt"
                 lift . withFile (T.unpack . format fp $ indOut) WriteMode $ \indOutHandle -> do
                     let VCFheader _ sampleNames = vcfHeader
-                    mapM_ (\n -> liftIO $ hPutStrLn indOutHandle (n ++ "\tU\tUnknown")) sampleNames
+                    mapM_ (\n -> liftIO $ T.hPutStrLn indOutHandle (format (s%"\tU\tUnknown") n))
+                          sampleNames
                 lift . withFile (T.unpack . format fp $ snpOut) WriteMode $ \snpOutHandle -> do
                     runEffect $ freqSumProducer >-> filterTransitions transversionsOnly >->
                                 printEigenStrat outputChrom snpOutHandle >-> printToStdOut
@@ -170,8 +170,8 @@ runWithOpts = do
         then P.filter (\(FreqSumRow _ _ ref alt _) -> isTransversion ref alt)
         else cat
     isTransversion ref alt = not $ isTransition ref alt
-    isTransition ref alt = ((ref == 'A') && (alt == 'G')) || ((ref == 'G') && (alt == 'A')) ||
-                           ((ref == 'C') && (alt == 'T')) || ((ref == 'T') && (alt == 'C'))
+    isTransition ref alt = ((ref == "A") && (alt == "G")) || ((ref == "G") && (alt == "A")) ||
+                           ((ref == "C") && (alt == "T")) || ((ref == "T") && (alt == "C"))
     
 runPileup :: ReaderT ProgOpt (SafeT IO) (VCFheader, Producer FreqSumRow (SafeT IO) ())
 runPileup = do
@@ -193,7 +193,7 @@ runPileupSimple = do
     let cmd = format (fp%" mpileup -q30 -Q30 -C50 -I -f "%fp%" -g -t DPR -r "%s%" "%s%
                       " | "%fp%" view -v snps") samtools reference region bams bcftools
     vcfTextProd <- liftIO $ produceFromCommand cmd
-    (vcfHeader_, vcfProd) <- lift $ parseVCF vcfTextProd
+    (vcfHeader_, vcfProd) <- lift $ readVCF vcfTextProd
     let vcfProdPipe = vcfProd >-> processVcfSimple (length bamFiles) mode minDepth
     return (vcfHeader_, vcfProdPipe)
 
@@ -213,16 +213,14 @@ runPileupSnpFile fn = do
                       " "%s%" | "%fp%" view") samtools reference region fn bams bcftools
     vcfTextProd <- liftIO $ produceFromCommand cmd
     let snpTextProd = PT.readFile ((T.unpack . format fp) fn)
-    (vcfHeader_, vcfProd) <- lift $ parseVCF vcfTextProd
-    let snpProd =
-            parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
-    let jointProd = orderedZip cmp snpProd vcfProd
+    (vcfHeader_, vcfProd) <- lift $ readVCF vcfTextProd
+    let snpProd = parsed snpParser snpTextProd >-> P.filter (\(SnpEntry c _ _ _) -> c == chrom)
+        jointProd = orderedZip cmp snpProd vcfProd
         jointProdPipe = jointProd >-> processVcfWithSnpFile (length bamFiles) mode minDepth
     return (vcfHeader_, fmap snd jointProdPipe)
   where
-    cmp (SnpEntry _ snpPos _ _) (VCFentry _ vcfPos _ _) = snpPos `compare` vcfPos
+    cmp (SnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
     
-
 produceFromCommand :: Text -> IO (Producer Text (SafeT IO) ())
 produceFromCommand cmd = do
     let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False 
@@ -230,74 +228,9 @@ produceFromCommand cmd = do
     (p, _) <- pipeOutput Inherit Inherit createProcess
     return . void . decodeUtf8 $ p
 
-parseVCF :: Producer Text (SafeT IO) () -> SafeT IO (VCFheader, Producer VCFentry (SafeT IO) ())
-parseVCF prod = do
-    (res, rest) <- runStateT (parse vcfHeaderParser) prod
-    header <- case res of
-        Nothing -> liftIO . throwIO $ AssertionFailed "vcf header not readible. VCF file empty?"
-        Just (Left e_) -> do
-            Right (chunk, _) <- next rest
-            let msg = show e_ ++ T.unpack chunk
-            liftIO . throwIO $ AssertionFailed ("VCF header parsing error: " ++ msg)
-        Just (Right h) -> return h
-    return (header, parsed vcfParser rest >>= liftErrors)
-  where
-    liftErrors res = case res of
-        Left (e_, prod_) -> do
-            Right (chunk, _) <- lift $ next prod_
-            let msg = show e_ ++ T.unpack chunk
-            lift . liftIO . throwIO $ AssertionFailed msg
-        Right () -> return ()
-
-vcfHeaderParser :: A.Parser VCFheader
-vcfHeaderParser = VCFheader <$> A.many' doubleCommentLine <*> singleCommentLine
-  where
-    doubleCommentLine = do
-        c1 <- A.string "##"
-        s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
-        return $ T.append c1 s_
-    singleCommentLine = do
-        void $ A.char '#'
-        s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
-        let fields = T.splitOn "\t" s_
-        return . drop 9 . map T.unpack $ fields
-
-vcfParser :: A.Parser VCFentry
-vcfParser = do
-    chrom <- word
-    tab
-    pos <- A.decimal
-    tab >> word >> tab
-    ref <- A.satisfy (A.inClass "NACTG")
-    tab
-    alt <- (altAllele <|> xAllele) `A.sepBy1` (A.char ',')
-    tab
-    _ <- A.count 3 (word >> tab)
-    _ <- A.string "PL:DPR" >> tab
-    coverages <- coverage `A.sepBy1` tab
-    _ <- A.satisfy (\c -> c == '\r' || c == '\n')
-    -- trace (show (chrom, pos, ref, alt, coverages)) $ return ()
-    let filteredAlt = catMaybes alt
-    let filteredCoverages =
-            [[c | (c, a) <- zip cov (Just ref:alt), a /= Nothing] | cov <- coverages]
-    return $ VCFentry chrom pos (ref:filteredAlt) filteredCoverages
-  where
-    altAllele = Just <$> A.satisfy (A.inClass "ACTG")
-    xAllele = (A.string "<X>" <|> A.string "<*>") >> return Nothing
-    coverage = do
-        _ <- A.decimal `A.sepBy1` (A.char ',') :: A.Parser [Int]
-        _ <- A.char ':'
-        A.decimal `A.sepBy1` (A.char ',')
-
-word :: A.Parser Text
-word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
-
-tab :: A.Parser ()
-tab = A.char '\t' >> return ()
-
 processVcfSimple :: Int -> CallingMode -> Int -> Pipe VCFentry FreqSumRow (SafeT IO) r
 processVcfSimple nrInds mode minDepth = for cat $ \vcfEntry -> do
-    let (VCFentry chrom pos alleles covNums) = vcfEntry
+    let Right (VCFentryReduced chrom pos alleles covNums) = makeReducedVCF vcfEntry
     when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number \
             \of genotypes. Check that bam files have different readgroup sample names")
     (normalizedAlleles, normalizedCovNums) <- case alleles of
@@ -314,12 +247,28 @@ processVcfSimple nrInds mode minDepth = for cat $ \vcfEntry -> do
                             (AssertionFailed "should not happen, altIndex==0")
             return ([head alleles, alt], [[c !! 0, c !! altIndex] | c <- covNums])
     let [ref, alt] = normalizedAlleles
-    when (ref /= 'N') $ do
+    when (ref /= "N") $ do
         genotypes <- liftIO $ mapM (callGenotype mode minDepth) normalizedCovNums
         when (any (>0) genotypes) $ yield (FreqSumRow chrom pos ref alt genotypes)
   where
     shuffle list = evalRandIO (shuffleM list)
+
+makeReducedVCF :: VCFentry -> Either String VCFentryReduced
+makeReducedVCF (VCFentry chrom pos _ ref alt _ _ _ formatS genotypes) = do
+    dprIndex <- fmap fst . headErr "Did not find DPR tag in format string" .
+                        filter ((=="DPR") . snd) . zip [0..] $ formatS
+    let covNums = map (getCorrectCovNums . (!!dprIndex)) genotypes
+    return $ VCFentryReduced chrom pos normalizedAlleles covNums
+  where
+    getCorrectCovNums covNumStr =
+        (\v -> map (v!!) normalizedAlleleIndices) . map (read . T.unpack) . T.splitOn "," $ 
+        covNumStr
+    normalizedAlleleIndexPairs = filter (\a -> snd a /= "<X>" && snd a /= "<*>") . zip [0..] $ 
+                                 ref : alt
+    normalizedAlleles = map snd normalizedAlleleIndexPairs
+    normalizedAlleleIndices = map fst normalizedAlleleIndexPairs
     
+
 callGenotype :: CallingMode -> Int -> [Int] -> IO Int
 callGenotype mode minDepth covs = do
     if sum covs < minDepth then return (-1) else do
@@ -348,8 +297,8 @@ processVcfWithSnpFile nrInds mode minDepth = for cat $ \jointEntry -> do
     case jointEntry of
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
             yield $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
-        (Just (SnpEntry snpChrom snpPos snpRef snpAlt),
-         Just (VCFentry _ _ vcfAlleles vcfNums)) -> do
+        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
+            let Right (VCFentryReduced _ _ vcfAlleles vcfNums) = makeReducedVCF vcfEntry
             when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent \ 
                             \number of genotypes. Check that bam files have different \
                             \readgroup sample names")
@@ -382,21 +331,23 @@ snpParser = do
     _ <- A.char ','
     alt <- A.satisfy (A.inClass "ACTG")
     _ <- A.satisfy (\c -> c == '\r' || c == '\n')
-    let ret = SnpEntry chrom pos ref alt
+    let ret = SnpEntry chrom pos (T.singleton ref) (T.singleton alt)
     -- trace (show ret) $ return ()
     return ret
-
+  where
+    word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
+    tab = A.char '\t' >> return ()
+    
 showFreqSum :: Text -> FreqSumRow -> Text
 showFreqSum outChrom (FreqSumRow _ pos ref alt calls) =
-    format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) outChrom pos (T.singleton ref) (T.singleton alt) callsStr
+    format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) outChrom pos ref alt callsStr
   where
     callsStr = (T.intercalate "\t" . map (format d)) calls
 
 printEigenStrat :: Text -> Handle -> Pipe FreqSumRow Text (SafeT IO) r
 printEigenStrat outChrom snpOutHandle = for cat $ \(FreqSumRow _ pos ref alt calls) -> do
     let n = format (s%"_"%d) outChrom pos
-        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n outChrom pos (T.singleton ref) 
-                            (T.singleton alt)
+        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n outChrom pos ref alt
     liftIO . T.hPutStrLn snpOutHandle $ snpLine
     yield . T.concat . map (format d . toEigenStratNum) $ calls
   where
