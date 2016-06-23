@@ -39,7 +39,7 @@ data VCFentry = VCFentry {
     vcfAlt :: [Text],
     vcfQual :: Double,
     vcfFilter :: Maybe Text,
-    vcfInfo :: [(Text, Text)],
+    vcfInfo :: [Text],
     vcfFormatString :: [Text],
     vcfGenotypeInfo :: [[Text]]
 } deriving (Show)
@@ -98,8 +98,7 @@ vcfEntryParser = VCFentry <$> word <* sp <*> A.decimal <* sp <*> parseId <* sp <
     parseAlternativeAlleles = parseDot <|> (word `A.sepBy1` A.char ',')
     parseFilter = parseDot <|> (Just <$> word)
     parseInfoFields = parseDot <|> (parseInfoField `A.sepBy1` A.char ';')
-    parseInfoField = (,) <$> A.takeTill (=='=') <* A.char '=' <*>
-                             A.takeTill (\c -> c == ';' || A.isHorizontalSpace c)
+    parseInfoField = A.takeTill (\c -> c == ';' || A.isHorizontalSpace c)
     parseFormatStrings = A.takeTill (\c -> c == ':' || A.isHorizontalSpace c) `A.sepBy1` A.char ':'
     parseGenotypeInfos = parseGenotype `A.sepBy1` (A.satisfy A.isHorizontalSpace)
     parseGenotype = parseGenoField `A.sepBy1` (A.char ':')
