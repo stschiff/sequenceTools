@@ -73,15 +73,17 @@ liftParsingErrors res = case res of
     Right () -> return ()
 
 vcfHeaderParser :: A.Parser VCFheader
-vcfHeaderParser = VCFheader <$> A.many' doubleCommentLine <*> singleCommentLine
+vcfHeaderParser = VCFheader <$> A.many1' doubleCommentLine <*> singleCommentLine
   where
     doubleCommentLine = do
         c1 <- A.string "##"
-        s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
+        s_ <- A.takeWhile1 (not . A.isEndOfLine)
+        A.endOfLine
         return $ append c1 s_
     singleCommentLine = do
         void $ A.char '#'
-        s_ <- A.takeTill A.isEndOfLine <* A.endOfLine
+        s_ <- A.takeWhile1 (not . A.isEndOfLine)
+        A.endOfLine
         let fields = splitOn "\t" s_
         return . drop 9 $ fields
 
@@ -95,7 +97,8 @@ vcfEntryParser = VCFentry <$> word <* sp <*> A.decimal <* sp <*> parseId <* sp <
     sp = A.satisfy A.isHorizontalSpace
     parseId = parseDot <|> (Just <$> word)
     parseDot = A.char '.' *> empty
-    parseAlternativeAlleles = parseDot <|> (word `A.sepBy1` A.char ',')
+    parseAlternativeAlleles = parseDot <|> (parseAllele `A.sepBy1` A.char ',')
+    parseAllele = A.takeTill (\c -> c == ',' || A.isHorizontalSpace c)
     parseFilter = parseDot <|> (Just <$> word)
     parseInfoFields = parseDot <|> (parseInfoField `A.sepBy1` A.char ';')
     parseInfoField = A.takeTill (\c -> c == ';' || A.isHorizontalSpace c)

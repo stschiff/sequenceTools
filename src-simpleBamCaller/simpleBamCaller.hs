@@ -13,7 +13,7 @@ import Data.Char (isSpace)
 import Data.List (sortBy)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
--- import Debug.Trace (trace)
+import Debug.Trace (trace)
 import qualified Options.Applicative as OP
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import Pipes.Attoparsec (parsed)
@@ -143,6 +143,7 @@ runWithOpts = do
             Nothing -> chrom
             Just label -> label
     (vcfHeader, freqSumProducer) <- runPileup
+    -- liftIO $ print vcfHeader
     case outFormat of
         FreqSumFormat -> do
             let VCFheader _ n = vcfHeader
@@ -166,7 +167,7 @@ runWithOpts = do
   where
     printToStdOut = for cat (liftIO . T.putStrLn)
     filterTransitions transversionsOnly =
-        if transversionsOnly 
+        if transversionsOnly
         then P.filter (\(FreqSumRow _ _ ref alt _) -> isTransversion ref alt)
         else cat
     isTransversion ref alt = not $ isTransition ref alt
@@ -231,6 +232,8 @@ produceFromCommand cmd = do
 processVcfSimple :: Int -> CallingMode -> Int -> Pipe VCFentry FreqSumRow (SafeT IO) r
 processVcfSimple nrInds mode minDepth = for cat $ \vcfEntry -> do
     let Right (VCFentryReduced chrom pos alleles covNums) = makeReducedVCF vcfEntry
+    -- trace (show vcfEntry) $ return ()
+    -- trace (show (VCFentryReduced chrom pos alleles covNums)) $ return ()
     when (length covNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number \
             \of genotypes. Check that bam files have different readgroup sample names")
     (normalizedAlleles, normalizedCovNums) <- case alleles of
