@@ -1,31 +1,40 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle 
+-- stack --resolver lts-6.4 --install-ghc runghc --package turtle --package foldl --package text
 
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Foldl (list)
 import Control.Monad (forM_)
 import Data.List (sortOn, groupBy)
+import Data.Maybe (fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Prelude hiding (FilePath)
 import Turtle
 
-main = do
-    (admixtureF, popF, popGroupF) <- options "prepare Admixture data for DataGraph" 
-                                               optParser
-    printData admixtureF popF popGroupF
-  where
-    optParser = (,,) <$> argPath "admixtureFile" "Input Admixture file" <*>
-                          argPath "popFile" "Input *.ind file" <*>
-                          argPath "popGroupFile" "PopGroup file"
+data Options = Options FilePath FilePath FilePath Int
 
-printData admixtureF popF popGroupF = do
+main = do
+    opts <- options "prepare Admixture data for DataGraph" optParser
+    printData opts
+  where
+    optParser = Options <$> optPath "admixtureFile" 'a' "Input Admixture file (*.Q)"
+                        <*> optPath "indFile" 'i' "Input *.ind file. This should be formatted in \
+                                    \EigenStrat, which includes the individual name in the \
+                                     \first, and the population name in the third column."
+                        <*> optPath "popGroupFile" 'p' "A file with two columns. The first is the \
+                              \population, the second population group, e.g. a continental group. \
+                              \Note that the order of populations in this file also determines \
+                              \the order in the output."
+                        <*> optInt "blankLines" 'b' "Number of blank lines between populations"
+                           
+printData (Options admixtureF popF popGroupF blankLines) = do
     popGroupDat <- readPopGroupDat popGroupF
     admixtureDat <- fold (readAdmixtureDat popGroupDat admixtureF popF) list
     let (_, _, _, vals) = head admixtureDat
         k = length vals
-        sortedDat = sortOn (\(_, _, pg, _) -> pg) . sortOn (\(_, p, _, _) -> p) $ admixtureDat
+        sortIndices = [(p, i) | ((p, _), i) <- zip popGroupDat [0..]]
+        sortedDat = sortOn (\(_, p, _, _) -> fromJust $ lookup p sortIndices) admixtureDat
         legendedDat = putLegend sortedDat
     echo . T.intercalate "\t" $ ["Sample", "Pop", "PopGroup", "Label"] ++
                                 [format ("Q"%d) i | i <- [1..12]]
@@ -33,7 +42,7 @@ printData admixtureF popF popGroupF = do
         forM_ group $ \(sample, pop, popGroup, legend, vals) -> do
             let vals' = vals ++ replicate (12 - length vals) 0.0
             echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals'
-        echo ""
+        replicateM_ blankLines (echo "")
 
 readPopGroupDat :: FilePath -> IO [(Text, Text)]
 readPopGroupDat popGroupF = do
