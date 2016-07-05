@@ -15,6 +15,7 @@ data Options = Options {
     optSnp2 :: FilePath,
     optInd2 :: FilePath,
     optOutPrefix :: FilePath,
+    optAllowDups :: Bool,
     optOutFormat :: Maybe OutFormat
 }
 
@@ -31,6 +32,8 @@ main = do
                       return (format ("geno2:\t"%fp) (optGeno2 args)) <|>
                       return (format ("snp2:\t"%fp) (optSnp2 args)) <|>
                       return (format ("ind2:\t"%fp) (optInd2 args)) <|>
+                      return (format ("allowdups:\t"%s)
+                              (if optAllowDups args then "YES" else "NO")) <|>
                       return (format ("genooutfilename:\t"%fp%".geno") (optOutPrefix args)) <|>
                       return (format ("snpoutfilename:\t"%fp%".snp") (optOutPrefix args)) <|>
                       return (format ("indoutfilename:\t"%fp%".ind") (optOutPrefix args))
@@ -52,6 +55,8 @@ parser = Options <$> optPath "geno1" 'g' "First Genotype File"
                  <*> optPath "ind2" 'I' "Second Ind File"
                  <*> optPath "outPrefix" 'o' "Output prefix for *.geno, *.snp and *.ind \
                                               \output files"
+                 <*> switch "allowDups" 'd' "Allow duplicates, leading for any duplicate \
+                                             \individual in the second data set to be ignored"
                  <*> optional (optRead "outFormat" 'f' "Output format. One of ANCESTRYMAP, \
                                \EIGENSTRAT, PED, PACKEDPED, PACKEDANCESTRYMAP. Default is \
                                \PACKEDANCESTRYMAP")
