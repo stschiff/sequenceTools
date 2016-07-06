@@ -12,7 +12,7 @@ import qualified Data.Text.IO as T
 import Prelude hiding (FilePath)
 import Turtle
 
-data Options = Options FilePath FilePath FilePath Int
+data Options = Options FilePath FilePath FilePath Int Bool
 
 main = do
     opts <- options "prepare Admixture data for DataGraph" optParser
@@ -27,14 +27,17 @@ main = do
                               \Note that the order of populations in this file also determines \
                               \the order in the output."
                         <*> optInt "blankLines" 'b' "Number of blank lines between populations"
+                        <*> switch "clusterSORT" 'c' "Sort by cluster, ignore order given in \
+                                                      \popGroups file"
                            
-printData (Options admixtureF popF popGroupF blankLines) = do
+printData (Options admixtureF popF popGroupF blankLines clusterSort) = do
     popGroupDat <- readPopGroupDat popGroupF
     admixtureDat <- fold (readAdmixtureDat popGroupDat admixtureF popF) list
     let (_, _, _, vals) = head admixtureDat
         k = length vals
-        sortIndices = [(p, i) | ((p, _), i) <- zip popGroupDat [0..]]
-        sortedDat = sortOn (\(_, p, _, _) -> fromJust $ lookup p sortIndices) admixtureDat
+        sortedDat = if clusterSort
+                    then sortByCluster admixtureDat
+                    else sortByPopGroupFile admixtureDat popGroupDat
         legendedDat = putLegend sortedDat
     echo . T.intercalate "\t" $ ["Sample", "Pop", "PopGroup", "Label"] ++
                                 [format ("Q"%d) i | i <- [1..k]]
@@ -55,6 +58,35 @@ readAdmixtureDat popGroupDat admixtureF popF = do
         [sample, _, pop] = cut (some space) . T.strip $ indL
     Just popGroup <- return $ pop `lookup` popGroupDat
     return (sample, pop, popGroup, vals)
+
+sortByPopGroupFile :: [(Text, Text, Text, [Double])] -> [(Text, Text)]
+                   -> [(Text, Text, Text, [Double])]
+sortByPopGroupFile admixtureDat popGroupDat = 
+    sortOn (\(_, p, _, _) -> fromJust $ lookup p sortIndices) admixtureDat
+  where
+    sortIndices = [(p, i) | ((p, _), i) <- zip popGroupDat [0..]]
+
+sortByCluster :: [(Text, Text, Text, [Double])] -> [(Text, Text, Text, [Double])]
+sortByCluster admixtureDat =
+    let groups = groupBy (\(_, p1, _, _) (_, p2, _, _) -> p1 == p2) . sortOn (\(_, p, _, _) -> p) $ 
+                 admixtureDat
+        groupClusterWeights = [getColumnAverage . map (\(_, _, _, vals) -> vals) $ g | g <- groups]
+        internallySortedGroups = zipWith sortInternally groupClusterWeights groups
+    in  concat $ sortExternally groupClusterWeights internallySortedGroups
+  where
+    sortInternally weights group = sortOn (\(_, _, _, vals) -> negate (vals !! maxCluster)) group
+      where
+        maxCluster = last . map fst . sortOn snd . zip [0..] $ weights
+    sortExternally weightMatrix groups = map snd . sortOn (maxIndex . fst) . sortOn (negate . maximum . fst) . zip weightMatrix $ groups
+      where
+        maxIndex = last . map fst . sortOn snd . zip [0..]
+    
+    
+getColumnAverage :: [[Double]] -> [Double]
+getColumnAverage mat = [(sum . map (!!i) $ mat) / fromIntegral n | i <- [0 .. (k - 1)]]
+  where
+    k = length . head $ mat
+    n = length mat
 
 putLegend :: [(Text, Text, Text, [Double])] -> [[(Text, Text, Text, Text, [Double])]]
 putLegend admixtureDat = do
