@@ -37,11 +37,10 @@ printData (Options admixtureF popF popGroupF blankLines) = do
         sortedDat = sortOn (\(_, p, _, _) -> fromJust $ lookup p sortIndices) admixtureDat
         legendedDat = putLegend sortedDat
     echo . T.intercalate "\t" $ ["Sample", "Pop", "PopGroup", "Label"] ++
-                                [format ("Q"%d) i | i <- [1..12]]
+                                [format ("Q"%d) i | i <- [1..k]]
     forM_ legendedDat $ \group -> do
         forM_ group $ \(sample, pop, popGroup, legend, vals) -> do
-            let vals' = vals ++ replicate (12 - length vals) 0.0
-            echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals'
+            echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals
         replicateM_ blankLines (echo "")
 
 readPopGroupDat :: FilePath -> IO [(Text, Text)]
