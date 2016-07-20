@@ -6,13 +6,13 @@
 import Control.Foldl (list)
 import Control.Monad (forM_)
 import Data.List (sortOn, groupBy)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Prelude hiding (FilePath)
 import Turtle
 
-data Options = Options FilePath FilePath FilePath Int Bool
+data Options = Options FilePath FilePath FilePath (Maybe Int) Bool (Maybe Int)
 
 main = do
     opts <- options "prepare Admixture data for DataGraph" optParser
@@ -26,24 +26,33 @@ main = do
                               \population, the second population group, e.g. a continental group. \
                               \Note that the order of populations in this file also determines \
                               \the order in the output."
-                        <*> optInt "blankLines" 'b' "Number of blank lines between populations"
+                        <*> optional (optInt "blankLines" 'b'
+                                      "Number of blank lines between populations")
                         <*> switch "clusterSORT" 'c' "Sort by cluster, ignore order given in \
                                                       \popGroups file"
+                        <*> optional (optInt "padColumns" 'k' "Pad the total number of Q columns \
+                                      \to a given number. The values in padded columns is set \
+                                      \to zero. This is useful for using a single Datagraph file \
+                                      \to produce plots for multiple K")
                            
-printData (Options admixtureF popF popGroupF blankLines clusterSort) = do
+printData (Options admixtureF popF popGroupF maybeBlankLines clusterSort maybePad) = do
     popGroupDat <- readPopGroupDat popGroupF
     admixtureDat <- fold (readAdmixtureDat popGroupDat admixtureF popF) list
+    let blankLines = fromMaybe 1 maybeBlankLines
     let (_, _, _, vals) = head admixtureDat
         k = length vals
+        padLength = fromMaybe k maybePad
         sortedDat = if clusterSort
                     then sortByCluster admixtureDat
                     else sortByPopGroupFile admixtureDat popGroupDat
         legendedDat = putLegend sortedDat
     echo . T.intercalate "\t" $ ["Sample", "Pop", "PopGroup", "Label"] ++
-                                [format ("Q"%d) i | i <- [1..k]]
+                                [format ("Q"%d) i | i <- [1..padLength]]
+    let padColumns = replicate (padLength - k) 0.0
     forM_ legendedDat $ \group -> do
         forM_ group $ \(sample, pop, popGroup, legend, vals) -> do
-            echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals
+            echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals ++ 
+                                        map (format g) padColumns
         replicateM_ blankLines (echo "")
 
 readPopGroupDat :: FilePath -> IO [(Text, Text)]
