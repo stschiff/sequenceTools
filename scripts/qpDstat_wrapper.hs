@@ -38,5 +38,5 @@ parser = Options <$> optPath "geno" 'g' "Genotype File"
                  <*> optPath "snp" 's' "Snp File"
                  <*> optPath "ind" 'i' "Ind File"
                  <*> optPath "popList" 'p' "give a list with all population triples"
-                 <*> optional (optInt "low" 'l' "analyse population quadruples from this line in the popList")
-                 <*> optional (optInt "high" 'h' "analyse population quadruples up to this line in the popList")
+                 <*> optional (optInt "lower" 'l' "analyse population quadruples from this line in the popList")
+                 <*> optional (optInt "upper" 'u' "analyse population quadruples up to this line in the popList")
