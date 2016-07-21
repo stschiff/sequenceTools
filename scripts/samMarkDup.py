@@ -26,7 +26,7 @@ for line in sys.stdin:
     pos = int(fields[3])
     seq = fields[9]
     
-    if lastRead == (rname, pos, seq):
+    if lastRead == (rname, pos, len(seq)):
         fields[1] = str(flag | 0x400)
         lastReadCount += 1
         if not args.remove:
@@ -37,7 +37,7 @@ for line in sys.stdin:
                 dupCounts[lastReadCount] = 0
             dupCounts[lastReadCount] += 1
         fields[1] = str(flag & (~0x400))
-        lastRead = (rname, pos, seq)
+        lastRead = (rname, pos, len(seq))
         lastReadCount = 1
         print "\t".join(fields)
     
