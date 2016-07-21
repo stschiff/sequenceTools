@@ -5,4 +5,5 @@ build/
 mergeit_wrapper
 smartpca_wrapper
 qp3Pop_wrapper
+qpDstat_wrapper
 convertf_wrapper
