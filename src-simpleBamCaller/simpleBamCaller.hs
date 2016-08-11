@@ -94,7 +94,10 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
                              \alternative allele \
                              \separated by a comma. Note that this file needs to have a difference \
                              \format than \
-                             \the snp files in Eigenstrat because of samtools specifications.")
+                             \the snp files in Eigenstrat because of samtools specifications. Note \
+                             \also that simpleBamCaller automatically checks whether alleles in \
+                             \the SNP file are flipped with respect to the human reference. But \
+                             \it assumes that the strand-orientation is the same.")
     parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
                             OP.metavar "<CHROM>" <> OP.help "specify the region in the BAM file to \
                             \call from. Can be just the chromosome, or a string of the form \
