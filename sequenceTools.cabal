@@ -9,7 +9,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-    exposed-modules:    SeqTools.OrderedZip, SeqTools.VCF
+    exposed-modules:    SeqTools.OrderedZip, SeqTools.VCF, SeqTools.Fasta
     hs-source-dirs:     src
     build-depends:      base, pipes, text, transformers, pipes-attoparsec, pipes-text, attoparsec, 
                         errors
