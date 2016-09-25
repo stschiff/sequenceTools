@@ -1,5 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle --package foldl --package text
+-- stack --resolver lts-7.0 --install-ghc runghc --package turtle --package foldl --package text
 
 {-# LANGUAGE OverloadedStrings #-}
 
