@@ -16,16 +16,14 @@ import Pipes (Producer, next, (>->), runEffect)
 import Pipes.Attoparsec (parse, parsed, ParsingError(..))
 import qualified Pipes.ByteString as P
 import Pipes.Prelude (drain)
-import System.IO (withFile, IOMode(..))
+import System.IO (Handle)
 import Turtle.Format (format, (%), s)
 import Turtle.Prelude (err)
 
-loadFastaChrom :: FilePath -> String -> IO (Producer B.ByteString IO ())
-loadFastaChrom refFilePath chrom = do
-    err $ format ("loading reference sequence from "%s) (pack refFilePath)
-    withFile refFilePath ReadMode $ \fh -> do
-        let prod = P.fromHandle fh
-        go prod
+loadFastaChrom :: Handle -> String -> IO (Producer B.ByteString IO ())
+loadFastaChrom refFileHandle chrom = do
+    let prod = P.fromHandle refFileHandle
+    go prod
   where
     go prod = do
         (chrom_, prod') <- readNextFastaEntry prod

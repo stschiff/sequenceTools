@@ -10,7 +10,8 @@ import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.Attoparsec.Text as A
-import qualified Data.ByteString.Lazy.Char8 as B
+import qualified Data.ByteString.Lazy.Char8 as BL
+import qualified Data.ByteString.Char8 as B
 import Data.Char (isSpace)
 import Data.Monoid ((<>))
 import qualified Data.Text as T
@@ -92,8 +93,9 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
                 Just fn -> do
                     refSeq <- case fillHomRef of
                             Just fp -> do
-                                bs <- liftIO $ loadFastaChrom fp chrom >>= PB.toLazyM
-                                return $ Just bs
+                                S.withFile fp ReadMode $ \fh -> do
+                                    bs <- liftIO $ loadFastaChrom fh chrom >>= PB.toLazyM
+                                    return $ Just (BL.toStrict bs)
                             Nothing -> return Nothing
                     return $ runJointly vcfBodyBiAllelic nrInds chrom fn refSeq
                 Nothing -> return $ runSimple vcfBodyBiAllelic chrom

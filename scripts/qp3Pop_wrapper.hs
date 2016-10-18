@@ -17,7 +17,7 @@ data Options = Options {
 main = do
     args <- options "Admixtools qp3Pop wrapper" parser
     runManaged $ do
-        paramFile <- mktempfile "/tmp" "qp3Pop_wrapper"
+        paramFile <- mktempfile "." "qp3Pop_wrapper"
         let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
                       return (format ("snpname:\t"%fp) (optSnp args)) <|>
                       return (format ("indivname:\t"%fp) (optInd args)) <|>

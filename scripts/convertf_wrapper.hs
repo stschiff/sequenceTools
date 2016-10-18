@@ -20,7 +20,7 @@ data Options = Options {
 main = do
     args <- options "Eigensoft convertf wrapper" parser
     runManaged $ do
-        paramFile <- mktempfile "/tmp" "convert_wrapper"
+        paramFile <- mktempfile "." "convert_wrapper"
         let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
                       return (format ("snpname:\t"%fp) (optSnp args)) <|>
                       return (format ("indivname:\t"%fp) (optInd args)) <|>

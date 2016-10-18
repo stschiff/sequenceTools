@@ -16,6 +16,7 @@ data Options = Options {
     optInd2 :: FilePath,
     optOutPrefix :: FilePath,
     optAllowDups :: Bool,
+    optStrandCheck :: Bool,
     optOutFormat :: Maybe OutFormat
 }
 
@@ -25,7 +26,7 @@ data OutFormat = ANCESTRYMAP | EIGENSTRAT | PED | PACKEDPED | PACKEDANCESTRYMAP
 main = do
     args <- options "Eigensoft mergeit wrapper" parser
     runManaged $ do
-        paramFile <- mktempfile "/tmp" "mergeit_wrapper"
+        paramFile <- mktempfile "." "mergeit_wrapper"
         let content = return (format ("geno1:\t"%fp) (optGeno1 args)) <|>
                       return (format ("snp1:\t"%fp) (optSnp1 args)) <|>
                       return (format ("ind1:\t"%fp) (optInd1 args)) <|>
@@ -34,6 +35,8 @@ main = do
                       return (format ("ind2:\t"%fp) (optInd2 args)) <|>
                       return (format ("allowdups:\t"%s)
                               (if optAllowDups args then "YES" else "NO")) <|>
+                      return (format ("strandcheck:\t"%s)
+                              (if optStrandCheck args then "YES" else "NO")) <|>
                       return (format ("genooutfilename:\t"%fp%".geno") (optOutPrefix args)) <|>
                       return (format ("snpoutfilename:\t"%fp%".snp") (optOutPrefix args)) <|>
                       return (format ("indoutfilename:\t"%fp%".ind") (optOutPrefix args))
@@ -57,6 +60,8 @@ parser = Options <$> optPath "geno1" 'g' "First Genotype File"
                                               \output files"
                  <*> switch "allowDups" 'd' "Allow duplicates, leading for any duplicate \
                                              \individual in the second data set to be ignored"
+                 <*> switch "strandcheck" 'c' "Check for strand misalignment. Warning: If set, \
+                                               \removes all A/T and C/G SNPs"
                  <*> optional (optRead "outFormat" 'f' "Output format. One of ANCESTRYMAP, \
                                \EIGENSTRAT, PED, PACKEDPED, PACKEDANCESTRYMAP. Default is \
                                \PACKEDANCESTRYMAP")

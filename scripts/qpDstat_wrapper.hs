@@ -19,7 +19,7 @@ data Options = Options {
 main = do
     args <- options "Admixtools qpDstat wrapper" parser
     runManaged $ do
-        paramFile <- mktempfile "/tmp" "qpDstat_wrapper"
+        paramFile <- mktempfile "." "qpDstat_wrapper"
         let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
                       return (format ("snpname:\t"%fp) (optSnp args)) <|>
                       return (format ("indivname:\t"%fp) (optInd args)) <|>
