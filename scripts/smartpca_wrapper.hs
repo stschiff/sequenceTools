@@ -17,9 +17,9 @@ data Options = Options {
 }
 
 main = do
-    args <- options "Eigensoft mergeit wrapper" parser
+    args <- options "Eigensoft smartpca wrapper" parser
     runManaged $ do
-        paramFile <- mktempfile "." "mergeit_wrapper"
+        paramFile <- mktempfile "." "smartpca_wrapper"
         let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
                       return (format ("snpname:\t"%fp) (optSnp args)) <|>
                       return (format ("indivname:\t"%fp) (optInd args)) <|>
