@@ -228,7 +228,7 @@ runPileupSnpFile fn = do
 produceFromCommand :: Text -> IO (Producer Text (SafeT IO) ())
 produceFromCommand cmd = do
     let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False 
-                                                        False defaultHandler
+                                                        False False False False Nothing Nothing defaultHandler
     (p, _) <- pipeOutput Inherit Inherit createProcess
     return . void . decodeUtf8 $ p
 
