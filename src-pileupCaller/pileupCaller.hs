@@ -82,13 +82,11 @@ pileupParser = PileupRow <$> word <* A.space <*> A.decimal <* A.space <*>
     A.endOfLine
   where
     parseRefAllele = A.satisfy (A.inClass "ACTGN")
-    parsePileupPerSample = parseTriple <|> parseTruncatedTriple
-    parseTriple = (,,) <$> A.decimal <*> alleles <*> word
-    alleles = A.takeWhile (A.inClass "ACTGNactgn.,")
-    parseTruncatedTriple = (,,) <$> (A.char '0' *> pure 0) <*> pure "" <*> pure ""
+    parsePileupPerSample = parseTriple
+    parseTriple = (,,) <$> A.decimal <* A.space <*> word <* A.space <*> word
 
 word :: A.Parser T.Text
-word = A.takeTill A.isHorizontalSpace
+word = A.takeTill isSpace
 
 simpleCalling :: Producer PileupRow (SafeT IO) () ->
     App (Producer FreqSumRow (SafeT IO) ())
@@ -134,7 +132,7 @@ callGenotype mode minDepth refA alleles = do
                         rn <- randomRIO (0, length listA - 1)
                         return . Just $ (listA !! rn, listA !! rn)
             RandomCalling -> do
-                rn <- randomRIO (0, length alleles)
+                rn <- randomRIO (0, length alleles - 1)
                 return . Just $ (alleles !! rn, alleles !! rn)
             RareCalling -> do
                 let groupedNonRefAlleles =
