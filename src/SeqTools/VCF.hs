@@ -68,7 +68,8 @@ liftParsingErrors :: (MonadIO m) => Either (ParsingError, Producer Text m r) () 
 liftParsingErrors res = case res of
     Left (e_, prod_) -> do
         Right (chunk, _) <- lift $ next prod_
-        let msg = show e_ ++ "\n" ++ unpack chunk
+        let msg = "encountered parsing error: " ++ show e_ ++ "\n" ++
+                unpack chunk
         lift . liftIO . throwIO $ AssertionFailed msg
     Right () -> return ()
 

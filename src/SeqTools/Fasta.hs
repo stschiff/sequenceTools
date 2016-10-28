@@ -5,7 +5,6 @@ module SeqTools.Fasta (readNextFastaEntry, loadFastaChrom) where
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO, MonadIO)
-import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict (runStateT)
 import qualified Data.Attoparsec.ByteString.Char8 as A
 import qualified Data.ByteString.Char8 as B
@@ -13,7 +12,7 @@ import Data.Char (isAlphaNum)
 import Data.Text (pack)
 import Lens.Family2 (view)
 import Pipes (Producer, next, (>->), runEffect)
-import Pipes.Attoparsec (parse, parsed, ParsingError(..))
+import Pipes.Attoparsec (parse)
 import qualified Pipes.ByteString as P
 import Pipes.Prelude (drain)
 import System.IO (Handle)
