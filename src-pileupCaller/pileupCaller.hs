@@ -8,7 +8,7 @@ import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
 import qualified Data.Attoparsec.Text as A
-import Data.Char (isSpace, isDigit)
+import Data.Char (isSpace, isDigit, toUpper)
 import Data.List (sortBy, partition, sortOn, group, sort)
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
@@ -46,7 +46,7 @@ data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow T.Text Int Char Char [Int] deriving (Show)
 data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)
                       -- Chrom  Pos Ref    Alt
-data PileupRow = PileupRow T.Text Int Char [(Int, Text, Text)]
+data PileupRow = PileupRow T.Text Int Char [Text]
 type App = ReaderT ProgOpt (SafeT IO) 
 
 main :: IO ()
@@ -77,13 +77,40 @@ setRandomSeed = do
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
 
 pileupParser :: A.Parser PileupRow
-pileupParser = PileupRow <$> word <* A.space <*> A.decimal <* A.space <*>
-    parseRefAllele <* A.space <*> parsePileupPerSample `A.sepBy1` A.space <*
+pileupParser = do
+    chrom <- word
+    _ <- A.space
+    pos <- A.decimal
+    _ <- A.space
+    refA <- A.satisfy (A.inClass "ACTGN")
+    _ <- A.space
+    entries <- (parsePileupPerSample refA) `A.sepBy1` A.space
     A.endOfLine
+    return $ PileupRow chrom pos refA entries
   where
-    parseRefAllele = A.satisfy (A.inClass "ACTGN")
-    parsePileupPerSample = parseTriple
-    parseTriple = (,,) <$> A.decimal <* A.space <*> word <* A.space <*> word
+    parsePileupPerSample refA =
+        processPileupEntry refA <$> A.decimal <* A.space <*> word <* A.space <*>
+        word
+
+processPileupEntry :: Char -> Int -> Text -> Text -> Text
+processPileupEntry refA cov readBaseString _ =
+    if cov == 0
+    then ""
+    else 
+        let returnString = T.pack $ go (T.unpack readBaseString) 
+        in  if (T.length returnString /= cov)
+            then error $ "readBaseString " ++ show readBaseString ++
+                " does not match coverage number " ++ show cov
+            else returnString
+  where
+    go (x:xs)
+        | x `elem` (".," :: String) = refA : go xs
+        | x `elem` ("ACTGNactgn" :: String) = toUpper x : go xs
+        | x `elem` ("$*" :: String) = go xs
+        | x == '^' = go (drop 1 xs)
+        | x `elem` ("+-" :: String) =
+            let [(num, rest)] = reads xs in go (drop num rest)
+    go [] = []
 
 word :: A.Parser T.Text
 word = A.takeTill isSpace
@@ -96,7 +123,7 @@ simpleCalling pileupProducer = do
     return $ for pileupProducer $ \pileupRow -> do
         let PileupRow chrom pos refA entryPerSample = pileupRow
         calls <- liftIO $ mapM (callGenotype mode minDepth refA)
-            [T.unpack alleles | (_, alleles, _) <- entryPerSample]
+            [T.unpack alleles | alleles <- entryPerSample]
         let altAlleles = findAlternativeAlleles refA calls
         when (length altAlleles == 1) $ do
             let altA = head altAlleles
@@ -177,7 +204,7 @@ snpListCalling snpFileName pileupProducer = do
                  Just pileupRow) -> do
                     let PileupRow chrom pos refA entryPerSample = pileupRow
                     calls <- liftIO $ mapM (callGenotype mode minDepth refA)
-                        [T.unpack alleles | (_, alleles, _) <- entryPerSample]
+                        [T.unpack alleles | alleles <- entryPerSample]
                     let genotypes = do
                             a <- calls
                             case a of
