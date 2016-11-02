@@ -46,7 +46,7 @@ data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow T.Text Int Char Char [Int] deriving (Show)
 data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)
                       -- Chrom  Pos Ref    Alt
-data PileupRow = PileupRow T.Text Int Char [Text]
+data PileupRow = PileupRow T.Text Int Char [Text] deriving (Show)
 type App = ReaderT ProgOpt (SafeT IO) 
 
 main :: IO ()
@@ -84,9 +84,11 @@ pileupParser = do
     _ <- A.space
     refA <- A.satisfy (A.inClass "ACTGN")
     _ <- A.space
-    entries <- (parsePileupPerSample refA) `A.sepBy1` A.space
+    entries <- (parsePileupPerSample refA) `A.sepBy1` A.satisfy A.isHorizontalSpace
     A.endOfLine
-    return $ PileupRow chrom pos refA entries
+    let ret = PileupRow chrom pos refA entries 
+    --trace (show ret) $ return ret 
+    return ret
   where
     parsePileupPerSample refA =
         processPileupEntry refA <$> A.decimal <* A.space <*> word <* A.space <*>
@@ -98,7 +100,7 @@ processPileupEntry refA cov readBaseString _ =
     then ""
     else 
         let returnString = T.pack $ go (T.unpack readBaseString) 
-        in  if (T.length returnString /= cov)
+        in  if (T.length returnString /= cov && readBaseString /= "*")
             then error $ "readBaseString " ++ show readBaseString ++
                 " does not match coverage number " ++ show cov
             else returnString
@@ -110,6 +112,8 @@ processPileupEntry refA cov readBaseString _ =
         | x == '^' = go (drop 1 xs)
         | x `elem` ("+-" :: String) =
             let [(num, rest)] = reads xs in go (drop num rest)
+        | otherwise = error $ "cannot parse read base string: " ++
+            (x:xs)
     go [] = []
 
 word :: A.Parser T.Text
