@@ -112,8 +112,7 @@ processPileupEntry refA cov readBaseString _ =
         | x == '^' = go (drop 1 xs)
         | x `elem` ("+-" :: String) =
             let [(num, rest)] = reads xs in go (drop num rest)
-        | otherwise = error $ "cannot parse read base string: " ++
-            (x:xs)
+        | otherwise = error $ "cannot parse read base string: " ++ (x:xs)
     go [] = []
 
 word :: A.Parser T.Text
@@ -217,6 +216,7 @@ snpListCalling snpFileName pileupProducer = do
                                              al2
                                 _               -> return (-1)
                     yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                _ -> return ()
     return (fst <$> ret)
   where
     cmp (SnpEntry snpChrom snpPos _ _) (PileupRow pChrom pPos _ _) =
