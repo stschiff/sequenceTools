@@ -84,25 +84,29 @@ pileupParser = do
     _ <- A.space
     refA <- A.satisfy (A.inClass "ACTGN")
     _ <- A.space
-    entries <- (parsePileupPerSample refA) `A.sepBy1` A.satisfy A.isHorizontalSpace
+    entries <- (parsePileupPerSample chrom pos refA) `A.sepBy1`
+        A.satisfy A.isHorizontalSpace
     A.endOfLine
     let ret = PileupRow chrom pos refA entries 
     --trace (show ret) $ return ret 
     return ret
   where
-    parsePileupPerSample refA =
-        processPileupEntry refA <$> A.decimal <* A.space <*> word <* A.space <*>
-        word
+    parsePileupPerSample chrom pos refA =
+        processPileupEntry chrom pos refA <$> A.decimal <* A.space <*> word <*
+            A.space <*> word
 
-processPileupEntry :: Char -> Int -> Text -> Text -> Text
-processPileupEntry refA cov readBaseString _ =
+processPileupEntry :: Text -> Int -> Char -> Int -> Text -> Text -> Text
+processPileupEntry chrom pos refA cov readBaseString _ =
     if cov == 0
     then ""
     else 
         let returnString = T.pack $ go (T.unpack readBaseString) 
         in  if (T.length returnString /= cov && readBaseString /= "*")
-            then error $ "readBaseString " ++ show readBaseString ++
-                " does not match coverage number " ++ show cov
+            then
+                trace ("Warning at " ++ show chrom ++ ", " ++
+                    show pos ++ ": readBaseString " ++
+                    show readBaseString ++ " does not match coverage number "
+                    ++ show cov) returnString
             else returnString
   where
     go (x:xs)
@@ -227,24 +231,26 @@ snpListCalling snpFileName pileupProducer = do
     chromNameCompare c1 c2 =
         let (c1Nums, c1NonNums) = partition isDigit . T.unpack $ c1
             (c2Nums, c2NonNums) = partition isDigit . T.unpack $ c2
+            c1Num = read c1Nums :: Int
+            c2Num = read c2Nums :: Int
         in  case c1NonNums `compare` c2NonNums of
                 LT -> LT
                 GT -> GT
-                EQ -> c1Nums `compare` c2Nums
+                EQ -> c1Num `compare` c2Num
 
 snpParser :: A.Parser SnpEntry
 snpParser = do
     _ <- many A.space
     _ <- word
-    _ <- A.space
+    _ <- A.many1 A.space
     chrom <- word
-    _ <- A.space
+    _ <- A.many1 A.space
     _ <- A.double
-    _ <- A.space
+    _ <- A.many1 A.space
     pos <- A.decimal
-    _ <- A.space
+    _ <- A.many1 A.space
     ref <- A.satisfy (A.inClass "ACTG")
-    _ <- A.space
+    _ <- A.many1 A.space
     alt <- A.satisfy (A.inClass "ACTG")
     _ <- A.satisfy (\c -> c == '\r' || c == '\n')
     let ret = SnpEntry chrom pos ref alt
