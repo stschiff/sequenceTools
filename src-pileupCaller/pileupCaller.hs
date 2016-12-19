@@ -10,7 +10,7 @@ import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace, isDigit, toUpper)
 import Data.List (sortBy, partition, sortOn, group, sort)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Debug.Trace (trace)
@@ -82,9 +82,11 @@ pileupParser = do
     _ <- A.space
     pos <- A.decimal
     _ <- A.space
-    refA <- A.satisfy (A.inClass "ACTGN")
+    refA <- A.satisfy (A.inClass "ACTGNM")
+     -- for some reason, there is an M in the human reference at
+     -- position 3:60830534 (both in hs37d5 and in hg19)
     _ <- A.space
-    entries <- (parsePileupPerSample chrom pos refA) `A.sepBy1`
+    entries <- parsePileupPerSample chrom pos refA `A.sepBy1`
         A.satisfy A.isHorizontalSpace
     A.endOfLine
     let ret = PileupRow chrom pos refA entries
@@ -151,12 +153,12 @@ callToGenotype refA altA a1 a2 | (a1, a2) == (refA, refA) = 0
                                | (a1, a2) == (altA, altA) = 2
                                | otherwise    = -1
 
-callGenotype :: CallingMode -> Int -> Char -> [Char] -> IO (Maybe (Char, Char))
-callGenotype mode minDepth refA alleles = do
+callGenotype :: CallingMode -> Int -> Char -> String -> IO (Maybe (Char, Char))
+callGenotype mode minDepth refA alleles =
     if length alleles < minDepth then return Nothing else
         case mode of
             MajorityCalling -> do
-                let groupedAlleles = sortOn fst $
+                let groupedAlleles = sortOn fst
                         [(length g, head g) | g <- group . sort $ alleles]
                     majorityCount = fst . head $ groupedAlleles
                     majorityAlleles =
@@ -179,10 +181,10 @@ callGenotype mode minDepth refA alleles = do
                     [(n, a)] -> return . Just $ (refA, a)
                     _ -> return Nothing
 
-findAlternativeAlleles :: Char -> [Maybe (Char, Char)] -> [Char]
+findAlternativeAlleles :: Char -> [Maybe (Char, Char)] -> String
 findAlternativeAlleles refA calls =
     let allAlleles = concatMap (\(a, b) -> [a, b]) . catMaybes $ calls
-        groupedNonRefAlleles = sortOn fst $
+        groupedNonRefAlleles = sortOn fst
             [(length g, head g) |
              g <- group . sort . filter (/=refA) $ allAlleles]
     in  if null groupedNonRefAlleles
@@ -203,9 +205,9 @@ snpListCalling snpFileName pileupProducer = do
         jointProd = orderedZip cmp snpProd pileupProducer
     mode <- asks optCallingMode
     minDepth <- asks optMinDepth
-    let ret = for jointProd $ \jointEntry -> do
+    let ret = for jointProd $ \jointEntry ->
             case jointEntry of
-                (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
+                (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) ->
                     yield $ FreqSumRow snpChrom snpPos snpRef snpAlt
                             (replicate (length sampleNames) (-1))
                 (Just (SnpEntry snpChrom snpPos snpRef snpAlt),
@@ -272,9 +274,7 @@ printFreqSum freqSumProducer = do
         P.map (showFreqSum outChrom) >-> printToStdOut
   where
     showFreqSum outChrom (FreqSumRow chrom pos ref alt calls) =
-        let newChrom = case outChrom of
-                Just c -> c
-                Nothing -> chrom
+        let newChrom = fromMaybe chrom outChrom
         in  format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) newChrom pos
                 (T.singleton ref) (T.singleton alt) callsStr
       where
@@ -297,7 +297,7 @@ printEigenStrat freqSumProducer = do
                 indOut = fn <.> "ind.txt"
             p <- asks optSamplePopName
             lift . withFile (T.unpack . format fp $ indOut) WriteMode $
-                \indOutHandle -> do
+                \indOutHandle ->
                     sequence_ [liftIO $ T.hPutStrLn indOutHandle
                                (format (s%"\tU\t"%s) n p) | n <- sampleNames]
             lift . withFile (T.unpack . format fp $ snpOut) WriteMode $
@@ -320,12 +320,10 @@ filterTransitions transversionsOnly =
         ((ref == 'G') && (alt == 'A')) || ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
 
-printEigenStratRow :: (Maybe Text) -> Handle -> Pipe FreqSumRow Text (SafeT IO) r
+printEigenStratRow :: Maybe Text -> Handle -> Pipe FreqSumRow Text (SafeT IO) r
 printEigenStratRow outChrom snpOutHandle =
     for cat $ \(FreqSumRow chrom pos ref alt calls) -> do
-        let newChrom = case outChrom of
-                Just c -> c
-                Nothing -> chrom
+        let newChrom = fromMaybe chrom outChrom
         let n = format (s%"_"%d) newChrom pos
             snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n newChrom pos
                 (T.singleton ref) (T.singleton alt)
