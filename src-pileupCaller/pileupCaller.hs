@@ -47,7 +47,7 @@ data FreqSumRow = FreqSumRow T.Text Int Char Char [Int] deriving (Show)
 data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)
                       -- Chrom  Pos Ref    Alt
 data PileupRow = PileupRow T.Text Int Char [Text] deriving (Show)
-type App = ReaderT ProgOpt (SafeT IO) 
+type App = ReaderT ProgOpt (SafeT IO)
 
 main :: IO ()
 main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
@@ -59,7 +59,7 @@ main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
 runWithOpts :: App ()
 runWithOpts = do
     setRandomSeed
-    let pileupProducer = parsed pileupParser PT.stdin >>= liftParsingErrors 
+    let pileupProducer = parsed pileupParser PT.stdin >>= liftParsingErrors
     snpFile <- asks optSnpFile
     freqSumProducer <- case snpFile of
             Nothing -> simpleCalling pileupProducer
@@ -87,8 +87,8 @@ pileupParser = do
     entries <- (parsePileupPerSample chrom pos refA) `A.sepBy1`
         A.satisfy A.isHorizontalSpace
     A.endOfLine
-    let ret = PileupRow chrom pos refA entries 
-    --trace (show ret) $ return ret 
+    let ret = PileupRow chrom pos refA entries
+    --trace (show ret) $ return ret
     return ret
   where
     parsePileupPerSample chrom pos refA =
@@ -99,15 +99,16 @@ processPileupEntry :: Text -> Int -> Char -> Int -> Text -> Text -> Text
 processPileupEntry chrom pos refA cov readBaseString _ =
     if cov == 0
     then ""
-    else 
-        let returnString = T.pack $ go (T.unpack readBaseString) 
-        in  if (T.length returnString /= cov && readBaseString /= "*")
-            then
-                trace ("Warning at " ++ show chrom ++ ", " ++
-                    show pos ++ ": readBaseString " ++
-                    show readBaseString ++ " does not match coverage number "
-                    ++ show cov) returnString
-            else returnString
+    else
+        let returnString = T.pack $ go (T.unpack readBaseString)
+        in returnString
+        -- in  if (T.length returnString /= cov && readBaseString /= "*")
+        --     then
+        --         trace ("Warning at " ++ show chrom ++ ", " ++
+        --             show pos ++ ": readBaseString " ++
+        --             show readBaseString ++ " does not match coverage number "
+        --             ++ show cov) returnString
+        --     else returnString
   where
     go (x:xs)
         | x `elem` (".," :: String) = refA : go xs
@@ -154,8 +155,8 @@ callGenotype :: CallingMode -> Int -> Char -> [Char] -> IO (Maybe (Char, Char))
 callGenotype mode minDepth refA alleles = do
     if length alleles < minDepth then return Nothing else
         case mode of
-            MajorityCalling -> do 
-                let groupedAlleles = sortOn fst $ 
+            MajorityCalling -> do
+                let groupedAlleles = sortOn fst $
                         [(length g, head g) | g <- group . sort $ alleles]
                     majorityCount = fst . head $ groupedAlleles
                     majorityAlleles =
@@ -181,7 +182,7 @@ callGenotype mode minDepth refA alleles = do
 findAlternativeAlleles :: Char -> [Maybe (Char, Char)] -> [Char]
 findAlternativeAlleles refA calls =
     let allAlleles = concatMap (\(a, b) -> [a, b]) . catMaybes $ calls
-        groupedNonRefAlleles = sortOn fst $ 
+        groupedNonRefAlleles = sortOn fst $
             [(length g, head g) |
              g <- group . sort . filter (/=refA) $ allAlleles]
     in  if null groupedNonRefAlleles
@@ -196,7 +197,7 @@ snpListCalling snpFileName pileupProducer = do
     sampleNameSpec <- asks optSampleNames
     sampleNames <- case sampleNameSpec of
         Left list -> return list
-        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn 
+        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
     let snpTextProd = PT.readFile ((T.unpack . format fp) snpFileName)
         snpProd = parsed snpParser snpTextProd >>= liftParsingErrors
         jointProd = orderedZip cmp snpProd pileupProducer
@@ -263,7 +264,7 @@ printFreqSum freqSumProducer = do
     sampleNameSpec <- asks optSampleNames
     sampleNames <- case sampleNameSpec of
         Left list -> return list
-        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn 
+        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
     echo $ format ("#CHROM\tPOS\tREF\tALT\t"%s)
         (T.intercalate "\t" . map (format (s%"(2)")) $ sampleNames)
     lift . runEffect $ freqSumProducer >->
@@ -286,7 +287,7 @@ printEigenStrat freqSumProducer = do
     sampleNameSpec <- asks optSampleNames
     sampleNames <- case sampleNameSpec of
         Left list -> return list
-        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn 
+        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
     eigenStratOutPrefix <- asks optEigenstratOutPrefix
     case eigenStratOutPrefix of
         Nothing -> liftIO . throwIO $
@@ -318,7 +319,7 @@ filterTransitions transversionsOnly =
     isTransition ref alt = ((ref == 'A') && (alt == 'G')) ||
         ((ref == 'G') && (alt == 'A')) || ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
-    
+
 printEigenStratRow :: (Maybe Text) -> Handle -> Pipe FreqSumRow Text (SafeT IO) r
 printEigenStratRow outChrom snpOutHandle =
     for cat $ \(FreqSumRow chrom pos ref alt calls) -> do
@@ -347,7 +348,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <>
         OP.value RandomCalling <> OP.showDefault <> OP.metavar "<MODE>" <>
         OP.help "specify the mode of calling: MajorityCalling, RandomCalling \
-        \or RareCalling. MajorityCalling: Pick the allele supported by the \   
+        \or RareCalling. MajorityCalling: Pick the allele supported by the \
         \most reads. If equal numbers of Alleles fulfil this, pick one at \
         \random. RandomCalling: Pick one read at random. RareCalling: \
         \Require a number of reads equal to the minDepth supporting the \
@@ -400,5 +401,3 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         OP.help "specify the filenames for the EigenStrat SNP and IND \
         \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt \
         \Ignored if Output format is not Eigenstrat")
-
-
