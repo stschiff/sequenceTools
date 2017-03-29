@@ -1,5 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle 
+-- stack --resolver lts-6.4 --install-ghc runghc --package turtle
 
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -12,7 +12,7 @@ data Options = Options {
     optSnp :: FilePath,
     optInd :: FilePath,
     optFormat :: FilePath,
-    optPoplist :: FilePath,
+    optPoplist :: Maybe FilePath,
     optOutGeno :: FilePath,
     optOutSnp :: FilePath,
     optOutInd :: FilePath
@@ -22,11 +22,14 @@ main = do
     args <- options "Eigensoft convertf wrapper" parser
     runManaged $ do
         paramFile <- mktempfile "." "convert_wrapper"
+        let popListRow = case optPoplist args of
+                Just popList -> return (format ("poplistname:\t"%fp) popList)
+                Nothing -> empty
         let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
                       return (format ("snpname:\t"%fp) (optSnp args)) <|>
                       return (format ("indivname:\t"%fp) (optInd args)) <|>
                       return (format ("outputformat:\t"%fp) (optFormat args)) <|>
-                      return (format ("poplistname:\t"%fp) (optPoplist args)) <|>
+                      popListRow <|>
                       return (format ("genotypeoutname:\t"%fp) (optOutGeno args)) <|>
                       return (format ("snpoutname:\t"%fp) (optOutSnp args)) <|>
                       return (format ("indivoutname:\t"%fp) (optOutInd args))
@@ -41,7 +44,7 @@ parser = Options <$> optPath "geno" 'g' "Genotype File"
                  <*> optPath "snp" 's' "Snp File"
                  <*> optPath "ind" 'i' "Ind File"
                  <*> optPath "outFormat" 'f' "output format"
-                 <*> optPath "popList" 'p' "population list"
+                 <*> optional (optPath "popList" 'p' "population list")
                  <*> optPath "outGeno" 'G' "Output Genotype File"
                  <*> optPath "outSnp" 'S' "Output Snp File"
                  <*> optPath "outInd" 'I' "Output Ind File"
