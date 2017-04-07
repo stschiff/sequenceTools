@@ -103,7 +103,7 @@ processPileupEntry chrom pos refA cov readBaseString _ =
     then ""
     else
         let returnString = T.pack $ go (T.unpack readBaseString)
-        in returnString
+        in  returnString
         -- in  if (T.length returnString /= cov && readBaseString /= "*")
         --     then
         --         trace ("Warning at " ++ show chrom ++ ", " ++
