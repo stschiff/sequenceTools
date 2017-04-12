@@ -136,9 +136,10 @@ getDosages vcfEntry = do
     genotypes <- getGenotypes vcfEntry
     let dosages = do
             gen <- genotypes
-            case gen of
-                "." -> return Nothing
-                genString -> return . Just $ count "1" genString
+            if '.' `elem` (unpack gen) then
+                return Nothing
+            else
+                return . Just $ count "1" gen
     return dosages
 
 makeSimpleVCFentry :: VCFentry -> Either String SimpleVCFentry
