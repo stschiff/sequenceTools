@@ -82,7 +82,7 @@ pileupParser = do
     _ <- A.space
     pos <- A.decimal
     _ <- A.space
-    refA <- A.satisfy (A.inClass "ACTGNM")
+    refA <- A.satisfy (A.inClass "ACTGNactgnM")
      -- for some reason, there is an M in the human reference at
      -- position 3:60830534 (both in hs37d5 and in hg19)
     _ <- A.space
