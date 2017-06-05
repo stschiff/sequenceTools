@@ -58,7 +58,8 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
                              \reference set. \
                              \All  positions in the SNP file will be output, adding missing data \
                              \or hom-ref where necessary.")
-    parseFillHomRef = OP.option (Just <$> OP.str) (OP.long "fillHomRef" <> OP.short 'r' <>
+    parseFillHomRef = OP.option (Just <$> OP.str) (OP.long "fillHomRef" <> OP.value Nothing <>
+                             OP.short 'r' <>
                              OP.help "Input a reference sequence (uncompressed fasta format) to \
                                       \use to declare missing sites in the VCF as Hom-Ref instead of \
                                       \missing. This is useful if your VCF only contains non-ref \
@@ -71,7 +72,7 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
                             OP.metavar "<CHROM>" <> OP.help "specify the chromosome in the VCF \
                             \file to \
                             \call from. This is important if a SNP file has been given.")
-    parseOutChrom = OP.option (Just <$> OP.str) (OP.long "outChrom" <>
+    parseOutChrom = OP.option (Just <$> OP.str) (OP.long "outChrom" <> OP.value Nothing <>
                                     OP.metavar "<CHROM>" <>
                                    OP.help "specify the output chromosome name" <> OP.value Nothing)
     parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <>
