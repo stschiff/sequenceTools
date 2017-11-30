@@ -40,7 +40,7 @@ data ProgOpt = ProgOpt {
     optEigenstratOutPrefix :: Maybe FilePath
 }
 
-data CallingMode = MajorityCalling | RandomCalling | RareCalling
+data CallingMode = MajorityCalling | RandomCalling | RareCalling | RandomDiploid
     deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow T.Text Int Char Char [Int] deriving (Show)
@@ -169,8 +169,10 @@ callGenotype mode minDepth refA alleles =
                         rn <- randomRIO (0, length listA - 1)
                         return . Just $ (listA !! rn, listA !! rn)
             RandomCalling -> do
-                rn <- randomRIO (0, length alleles - 1)
-                return . Just $ (alleles !! rn, alleles !! rn)
+                res <- sampleWithoutReplacement alleles 1
+                case res of
+                    Nothing -> return Nothing
+                    Just [a] -> return . Just $ (a, a)
             RareCalling -> do
                 let groupedNonRefAlleles =
                         [(length g, head g) |
@@ -180,6 +182,24 @@ callGenotype mode minDepth refA alleles =
                     [] -> return . Just $ (refA, refA)
                     [(n, a)] -> return . Just $ (refA, a)
                     _ -> return Nothing
+            RandomDiploid -> do
+                res <- sampleWithoutReplacement alleles 2
+                case res of
+                    Nothing -> return Nothing
+                    Just [a1, a2] -> return . Just $ (a1, a2)
+
+sampleWithoutReplacement :: [a] -> Int -> IO (Maybe [a])
+sampleWithoutReplacement = go []
+  where
+    go res xs 0 = return $ Just res
+    go res xs n =
+        if n > length xs
+        then return Nothing
+        else do
+            rn <- randomRIO (0, length xs - 1)
+            let a = xs !! rn
+                xs' = let (ys, zs) = splitAt rn xs in ys ++ tail zs
+            go (a:res) xs' (n - 1)
 
 findAlternativeAlleles :: Char -> [Maybe (Char, Char)] -> String
 findAlternativeAlleles refA calls =
@@ -267,7 +287,7 @@ printFreqSum freqSumProducer = do
     sampleNames <- case sampleNameSpec of
         Left list -> return list
         Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
-    echo $ format ("#CHROM\tPOS\tREF\tALT\t"%s)
+    echo . unsafeTextToLine $ format ("#CHROM\tPOS\tREF\tALT\t"%s)
         (T.intercalate "\t" . map (format (s%"(2)")) $ sampleNames)
     lift . runEffect $ freqSumProducer >->
         filterTransitions transversionsOnly >->
@@ -345,14 +365,17 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
   where
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <>
         OP.value RandomCalling <> OP.showDefault <> OP.metavar "<MODE>" <>
-        OP.help "specify the mode of calling: MajorityCalling, RandomCalling \
-        \or RareCalling. MajorityCalling: Pick the allele supported by the \
+        OP.help "specify the mode of calling: MajorityCalling, RandomCalling, \
+        \RareCalling or RandomDiploid. \n\
+        \* MajorityCalling: Pick the allele supported by the \
         \most reads. If equal numbers of Alleles fulfil this, pick one at \
-        \random. RandomCalling: Pick one read at random. RareCalling: \
-        \Require a number of reads equal to the minDepth supporting the \
-        \alternative allele to call a heterozygote. Otherwise call \
-        \homozygous reference or missing depending on depth. For \
-        \RareCalling you should use --minDepth 2.")
+        \random. \n\
+        \* RandomCalling: Pick one read at random. \n\
+        \* RareCalling: Require a number of reads equal to the minDepth \ \supporting the alternative allele to call a heterozygote. Otherwise \ \call homozygous reference or missing depending on depth. For \
+        \RareCalling you should use --minDepth 2.\n \
+        \* RandomDiploid: Sample two random reads at random and represent the \
+        \individual by the diploid genotype constructed from those two random \
+        \picks. This will always assign missing data to positions where only one read is present, even if minDepth=1.")
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <>
         OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
         OP.help "random seed used for random calling. If not given, use \

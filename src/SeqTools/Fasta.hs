@@ -18,6 +18,7 @@ import Pipes.Prelude (drain)
 import System.IO (Handle)
 import Turtle.Format (format, (%), s)
 import Turtle.Prelude (err)
+import Turtle.Line (unsafeTextToLine)
 
 loadFastaChrom :: Handle -> String -> IO (Producer B.ByteString IO ())
 loadFastaChrom refFileHandle chrom = do
@@ -26,7 +27,7 @@ loadFastaChrom refFileHandle chrom = do
   where
     go prod = do
         (chrom_, prod') <- readNextFastaEntry prod
-        err $ format ("found chromosome "%s) (pack chrom_)
+        err . unsafeTextToLine $ format ("found chromosome "%s) (pack chrom_)
         if chrom_ == chrom
         then return (void prod')
         else do
@@ -55,4 +56,3 @@ fastaHeaderLineParser = do
     A.skipWhile (\c -> c /= '\n' && c /= '\r')
     A.endOfLine
     return . B.unpack $ chrom
-
