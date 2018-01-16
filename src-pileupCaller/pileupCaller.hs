@@ -34,7 +34,7 @@ data ProgOpt = ProgOpt {
     optSeed :: Maybe Int,
     optMinDepth :: Int,
     optMinSupport :: Int,
-    optTransversionsOnly :: TransversionMode,
+    optTransitionsOnly :: TransitionsMode,
     optSnpFile :: Maybe FilePath,
     optOutChrom :: Maybe Text,
     optOutFormat :: OutFormat,
@@ -49,7 +49,7 @@ data CallingMode =
         RareCalling Int |
         RandomDiploidCalling
     deriving (Show, Read)
-data TransversionMode =
+data TransitionsMode =
     TransitionsMissing | SkipTransitions | AllSites deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
 data FreqSumRow = FreqSumRow T.Text Int Char Char [Int] deriving (Show)
@@ -319,7 +319,7 @@ snpParser = do
 printFreqSum :: Producer FreqSumRow (SafeT IO) () -> App ()
 printFreqSum freqSumProducer = do
     outChrom <- asks optOutChrom
-    transversionsOnly <- asks optTransversionsOnly
+    transitionsOnly <- asks optTransitionsOnly
     sampleNameSpec <- asks optSampleNames
     callingMode <- getCallingMode
     sampleNames <- case sampleNameSpec of
@@ -334,7 +334,7 @@ printFreqSum freqSumProducer = do
         T.intercalate "\t"
             [format (s%"("%d%")") n nrHaplotypes | n <- sampleNames]
     lift . runEffect $ freqSumProducer >->
-        filterTransitions transversionsOnly >->
+        filterTransitions transitionsOnly >->
         P.map (showFreqSum outChrom) >-> printToStdOut
   where
     showFreqSum outChrom (FreqSumRow chrom pos ref alt calls) =
@@ -347,7 +347,7 @@ printFreqSum freqSumProducer = do
 printEigenStrat :: Producer FreqSumRow (SafeT IO) () -> App ()
 printEigenStrat freqSumProducer = do
     outChrom <- asks optOutChrom
-    transversionsOnly <- asks optTransversionsOnly
+    transitionsMode <- asks optTransitionsOnly
     sampleNameSpec <- asks optSampleNames
     callingMode <- getCallingMode
     let diploidizeCall = case callingMode of
@@ -372,20 +372,23 @@ printEigenStrat freqSumProducer = do
                                (format (s%"\tU\t"%s) n p) | n <- sampleNames]
             lift . withFile (T.unpack . format fp $ snpOut) WriteMode $
                 \snpOutHandle -> runEffect $
-                    freqSumProducer >-> filterTransitions transversionsOnly >->
+                    freqSumProducer >-> filterTransitions transitionsMode >->
                         printEigenStratRow diploidizeCall outChrom snpOutHandle >-> printToStdOut
 
 printToStdOut :: Consumer T.Text (SafeT IO) ()
 printToStdOut = for cat (liftIO . T.putStrLn)
 
-filterTransitions :: TransversionMode ->
+filterTransitions :: TransitionsMode ->
     Pipe FreqSumRow FreqSumRow (SafeT IO) ()
 filterTransitions transversionsMode =
     case transversionsMode of
         SkipTransitions ->
             P.filter (\(FreqSumRow _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
-            P.map (\(FreqSumRow chrom pos ref alt calls) -> FreqSumRow chrom pos ref alt [-1 | c <- calls])
+            P.map (\(FreqSumRow chrom pos ref alt calls) ->
+                let calls' = if isTransversion ref alt then calls else
+                        [-1 | c <- calls]
+                in  FreqSumRow chrom pos ref alt calls')
         AllSites -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt
@@ -421,7 +424,7 @@ printEigenStratRow diploidizeCall outChrom snpOutHandle =
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
-    parseMinSupport <*> parseTransversionsMode <*> parseSnpFile <*>
+    parseMinSupport <*> parseTransitionsMode <*> parseSnpFile <*>
     parseOutChrom <*>
     parseFormat <*> parseSampleNames <*> parseSamplePopName <*>
     parseEigenstratOutPrefix
@@ -454,7 +457,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         OP.help "specify the minimum number of supporting reads for the \
         \RandomCalling, MajorityCalling and RareCalling (deprecated) methods. For calling rare variants with either of those methods, you should set \
         \--minSupport 2 or higher.")
-    parseTransversionsMode = OP.option OP.auto (OP.long "transversionsMode" <>
+    parseTransitionsMode = OP.option OP.auto (OP.long "transitionsMode" <>
         OP.short 't' <> OP.value AllSites <> OP.metavar "MODE" <>
         OP.showDefault <> OP.help "Three \
         \options possible: SkipTransitions: skip transitions in the output; \
