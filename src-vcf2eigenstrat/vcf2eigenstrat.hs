@@ -17,7 +17,9 @@ import Data.Monoid ((<>))
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 -- import Debug.Trace (trace)
+import Data.Version (showVersion)
 import qualified Options.Applicative as OP
+import Paths_sequenceTools (version)
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import Pipes.Attoparsec (parsed)
 import qualified Pipes.ByteString as PB
@@ -38,15 +40,20 @@ data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)-- Chrom Pos Ref Al
 --     prod <- loadFastaChrom "/data/schiffels/ReferenceGenome/hs37d5.fa" "10"
 --     let loop = for (prod >-> PB.take 200) $ \b -> liftIO $ print b
 --     runEffect loop
-    
+
 main :: IO ()
 main = readOptions >>= runMain
 
 readOptions :: IO ProgOpt
 readOptions = OP.execParser parserInfo
   where
-    parserInfo = OP.info (OP.helper <*> argParser)
-                         (OP.progDesc "A program to convert a VCF file (stdin) to Eigenstrat")
+    parserInfo = OP.info
+        (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
+        (OP.progDesc "A program to convert a VCF file (stdin) to Eigenstrat")
+    versionInfoOpt = OP.infoOption ("This is vcf2eigenstrat from sequenceTools \
+        \Version " ++ showVersion version)
+        (OP.long "version" <> OP.help "Print version and exit")
+
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <*> parseChrom <*>

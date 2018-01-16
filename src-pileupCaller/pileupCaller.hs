@@ -13,8 +13,10 @@ import Data.List (sortBy, partition, sortOn, group, sort)
 import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import Data.Version (showVersion)
 import Debug.Trace (trace)
 import qualified Options.Applicative as OP
+import Paths_sequenceTools (version)
 import Pipes (Consumer, Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import Pipes.Attoparsec (parsed)
 import qualified Pipes.Prelude as P
@@ -52,9 +54,12 @@ type App = ReaderT ProgOpt (SafeT IO)
 main :: IO ()
 main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
   where
-    parser = OP.info (OP.helper <*> argParser)
+    parser = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
                      (OP.progDesc "A program to perform genotype calling from \
                      \a pileup file")
+    versionInfoOpt = OP.infoOption ("This is pileupCaller from sequenceTools \
+        \Version " ++ showVersion version)
+        (OP.long "version" <> OP.help "Print version and exit")
 
 runWithOpts :: App ()
 runWithOpts = do
