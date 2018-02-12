@@ -34,6 +34,7 @@ data ProgOpt = ProgOpt {
     optSeed :: Maybe Int,
     optMinDepth :: Int,
     optMinSupport :: Int,
+    optDownSampling :: Bool,
     optTransitionsOnly :: TransitionsMode,
     optSnpFile :: Maybe FilePath,
     optOutChrom :: Maybe Text,
@@ -43,10 +44,7 @@ data ProgOpt = ProgOpt {
     optEigenstratOutPrefix :: Maybe FilePath
 }
 
-data CallingMode =
-        MajorityCalling Int |
-        RandomCalling Int |
-        RareCalling Int |
+data CallingMode = MajorityCalling Bool | RandomCalling | RareCalling Int |
         RandomDiploidCalling
     deriving (Show, Read)
 data TransitionsMode =
@@ -112,18 +110,7 @@ pileupParser = do
 
 processPileupEntry :: Text -> Int -> Char -> Int -> Text -> Text -> Text
 processPileupEntry chrom pos refA cov readBaseString _ =
-    if cov == 0
-    then ""
-    else
-        let returnString = T.pack $ go (T.unpack readBaseString)
-        in  returnString
-        -- in  if (T.length returnString /= cov && readBaseString /= "*")
-        --     then
-        --         trace ("Warning at " ++ show chrom ++ ", " ++
-        --             show pos ++ ": readBaseString " ++
-        --             show readBaseString ++ " does not match coverage number "
-        --             ++ show cov) returnString
-        --     else returnString
+    if cov == 0 then "" else T.pack $ go (T.unpack readBaseString)
   where
     go (x:xs)
         | x `elem` (".," :: String) = refA : go xs
@@ -157,10 +144,11 @@ simpleCalling pileupProducer = do
 getCallingMode :: App CallingMode
 getCallingMode = do
     callingModeString <- asks optCallingModeString
+    downSampling <- asks optDownSampling
     minSupport <- asks optMinSupport
     case callingModeString of
-        "MajorityCalling" -> return $ MajorityCalling minSupport
-        "RandomCalling" -> return $ RandomCalling minSupport
+        "MajorityCalling" -> return $ MajorityCalling downSampling
+        "RandomCalling" -> return RandomCalling
         "RareCalling" -> return $ RareCalling minSupport
         "RandomDiploidCalling" -> return RandomDiploidCalling
         _ -> error ("illegal calling mode " ++ callingModeString)
@@ -169,9 +157,15 @@ callGenotype :: CallingMode -> Int -> Char -> String -> IO Call
 callGenotype mode minDepth refA alleles =
     if length alleles < minDepth then return MissingCall else
         case mode of
-            MajorityCalling minSupport -> do
+            MajorityCalling downSampling -> do
+                alleles' <-
+                    if downSampling
+                    then do
+                        Just a <- sampleWithoutReplacement alleles minDepth
+                        return a
+                    else return alleles
                 let groupedAlleles = sortOn fst
-                        [(length g, head g) | g <- group . sort $ alleles]
+                        [(length g, head g) | g <- group . sort $ alleles']
                     majorityCount = fst . head $ groupedAlleles
                     majorityAlleles =
                         [a | (n, a) <- groupedAlleles, n == majorityCount]
@@ -180,25 +174,12 @@ callGenotype mode minDepth refA alleles =
                     listA -> do
                         rn <- randomRIO (0, length listA - 1)
                         return (listA !! rn)
-                let nrSupportingReads =
-                        length . filter (==a) $ alleles
-                if nrSupportingReads >= minSupport
-                then
-                    return $ HaploidCall a
-                else
-                    return MissingCall
-            RandomCalling minSupport -> do
+                return $ HaploidCall a
+            RandomCalling -> do
                 res <- sampleWithoutReplacement alleles 1
                 case res of
                     Nothing -> return MissingCall
-                    Just [a] -> do
-                        let nrSupportingReads =
-                                length . filter (==a) $ alleles
-                        if nrSupportingReads >= minSupport
-                        then
-                            return $ HaploidCall a
-                        else
-                            return MissingCall
+                    Just [a] -> return $ HaploidCall a
             RareCalling minSupport -> do
                 let groupedNonRefAlleles =
                         [(length g, head g) |
@@ -218,14 +199,15 @@ sampleWithoutReplacement :: [a] -> Int -> IO (Maybe [a])
 sampleWithoutReplacement = go []
   where
     go res xs 0 = return $ Just res
-    go res xs n =
-        if n > length xs
-        then return Nothing
-        else do
-            rn <- randomRIO (0, length xs - 1)
-            let a = xs !! rn
-                xs' = let (ys, zs) = splitAt rn xs in ys ++ tail zs
-            go (a:res) xs' (n - 1)
+    go res xs n
+        | n > length xs = return Nothing
+        | n == length xs = return $ Just (xs ++ res)
+        | otherwise = do
+                rn <- randomRIO (0, length xs - 1)
+                let a = xs !! rn
+                    xs' = remove rn xs
+                go (a:res) xs' (n - 1)
+    remove i xs = let (ys, zs) = splitAt i xs in ys ++ tail zs
 
 callToGenotype :: Char -> Char -> Call -> Int
 callToGenotype refA altA call = case call of
@@ -327,7 +309,7 @@ printFreqSum freqSumProducer = do
         Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
     let nrHaplotypes = case callingMode of
             MajorityCalling _ -> 1
-            RandomCalling _ -> 1
+            RandomCalling -> 1
             RareCalling _ -> 2
             RandomDiploidCalling -> 2
     echo . unsafeTextToLine . format ("#CHROM\tPOS\tREF\tALT\t"%s) $
@@ -351,7 +333,7 @@ printEigenStrat freqSumProducer = do
     sampleNameSpec <- asks optSampleNames
     callingMode <- getCallingMode
     let diploidizeCall = case callingMode of
-            RandomCalling _ -> True
+            RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
             RareCalling _ -> False
@@ -424,10 +406,9 @@ printEigenStratRow diploidizeCall outChrom snpOutHandle =
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
-    parseMinSupport <*> parseTransitionsMode <*> parseSnpFile <*>
-    parseOutChrom <*>
-    parseFormat <*> parseSampleNames <*> parseSamplePopName <*>
-    parseEigenstratOutPrefix
+    parseMinSupport <*> parseDownSampling <*> parseTransitionsMode <*> 
+    parseSnpFile <*> parseOutChrom <*> parseFormat <*> parseSampleNames <*> 
+    parseSamplePopName <*> parseEigenstratOutPrefix
   where
     parseCallingMode = OP.strOption (OP.long "mode" <> OP.short 'm' <>
         OP.value "RandomCalling" <> OP.showDefault <> OP.metavar "<MODE>" <>
@@ -455,8 +436,14 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
     parseMinSupport = OP.option OP.auto (OP.long "minSupport" <>
         OP.value 1 <> OP.showDefault <> OP.metavar "<MIN_SUPPORT>" <>
         OP.help "specify the minimum number of supporting reads for the \
-        \RandomCalling, MajorityCalling and RareCalling (deprecated) methods. For calling rare variants with either of those methods, you should set \
+        \RareCalling (deprecated) method. This option is ignored for other \
+        \calling methods. For RareCalling, you should use \
         \--minSupport 2 or higher.")
+    parseDownSampling = OP.switch (OP.long "withDownSampling" <> OP.help
+        "When this switch is given, the MajorityCalling mode with downsample \
+        \from the total number of reads a number of reads \
+        \(without replacement) equal to the --minDepth given. This mitigates a \
+        \subtle reference bias in the MajorityCalling model.")
     parseTransitionsMode = OP.option OP.auto (OP.long "transitionsMode" <>
         OP.short 't' <> OP.value AllSites <> OP.metavar "MODE" <>
         OP.showDefault <> OP.help "Three \
