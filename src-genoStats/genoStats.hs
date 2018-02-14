@@ -86,8 +86,8 @@ runWithEigenstrat :: FilePath -> FilePath -> FilePath -> IO ([Text], Producer In
 runWithEigenstrat genoFile snpFile indFile = do
     indEntries <- E.readEigenstratInd (repr indFile)
     let names = [name | E.EigenstratIndEntry name _ _ <- indEntries]
-    genoHandle <- openFile (repr genoFile) ReadMode
-    snpHandle <- openFile (repr snpFile) ReadMode
+    genoHandle <- openFile (repr $ format fp genoFile) ReadMode
+    snpHandle <- openFile (repr $ format fp snpFile) ReadMode
     let genoProd = streamEigenstratGeno genoHandle
         snpProd = streamEigenstratSnp snpHandle
         zippedProducer = P.zip snpProd genoProd
