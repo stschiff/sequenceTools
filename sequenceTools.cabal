@@ -9,7 +9,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-    exposed-modules:    SeqTools.OrderedZip, SeqTools.VCF, SeqTools.Fasta
+    exposed-modules:    SeqTools.OrderedZip
     hs-source-dirs:     src
     build-depends:      base, pipes, text, transformers, pipes-attoparsec, pipes-text, attoparsec,
                         errors, bytestring, pipes-bytestring, turtle, lens-family
@@ -20,14 +20,23 @@ executable vcf2eigenstrat
     hs-source-dirs:     src-vcf2eigenstrat
     build-depends:      base, sequenceTools, transformers, attoparsec, text, optparse-applicative,
                         pipes, pipes-attoparsec, pipes-safe, pipes-text, turtle, pipes-bytestring,
-                        bytestring
+                        bytestring, sequence-formats
     default-language:   Haskell2010
+    other-modules:      Paths_sequenceTools
 
 executable pileupCaller
     main-is:            pileupCaller.hs
     hs-source-dirs:     src-pileupCaller
     build-depends:      base, sequenceTools, transformers, attoparsec, text,
                         optparse-applicative, pipes, pipes-attoparsec,  pipes-safe,
-                        pipes-text, random, turtle, errors
+                        pipes-text, random, turtle, errors, sequence-formats
     default-language:   Haskell2010
     ghc-options:        -threaded -rtsopts -with-rtsopts=-N2
+    other-modules:      Paths_sequenceTools
+
+executable genoStats
+    main-is:            genoStats.hs
+    hs-source-dirs:     src-genoStats
+    build-depends:      base, exceptions, sequence-formats, pipes, turtle, text, errors, pipes-text
+    default-language:   Haskell2010
+    other-modules:      Paths_sequenceTools

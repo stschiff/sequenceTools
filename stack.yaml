@@ -1,4 +1,9 @@
 flags: {}
-packages: ['.']
+packages:
+- location: .
+- location:
+    git: https://github.com/stschiff/sequence-formats.git
+    commit: 39b094cc81ab4da23a4736202dc91965048f405e
+  extra-dep: true
 extra-deps: []
-resolver: lts-9.9
+resolver: lts-10.5

@@ -1,20 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import SeqTools.OrderedZip (orderedZip)
-import SeqTools.VCF (liftParsingErrors)
+import SequenceFormats.VCF (liftParsingErrors)
 
-import Control.Error (headErr)
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask, asks)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace, isDigit, toUpper)
-import Data.List (sortBy, partition, sortOn, group, sort)
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.List (partition, sortOn, group, sort)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Version (showVersion)
-import Debug.Trace (trace)
+-- import Debug.Trace (trace)
 import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
 import Pipes (Consumer, Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
@@ -22,12 +21,11 @@ import Pipes.Attoparsec (parsed)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
 import Pipes.Safe.Prelude (withFile)
-import Pipes.Text.Encoding (decodeUtf8)
 import qualified Pipes.Text.IO as PT
 import Prelude hiding (FilePath)
 import System.IO (IOMode(..))
 import System.Random (randomRIO, mkStdGen, setStdGen)
-import Turtle hiding (tab, cat, stderr, err)
+import Turtle hiding (tab, cat, stderr, err, sort, sortOn, x, g)
 
 data ProgOpt = ProgOpt {
     optCallingModeString :: String,
@@ -97,19 +95,19 @@ pileupParser = do
      -- for some reason, there is an M in the human reference at
      -- position 3:60830534 (both in hs37d5 and in hg19)
     _ <- A.space
-    entries <- parsePileupPerSample chrom pos refA `A.sepBy1`
+    entries <- parsePileupPerSample refA `A.sepBy1`
         A.satisfy A.isHorizontalSpace
     A.endOfLine
     let ret = PileupRow chrom pos refA entries
     --trace (show ret) $ return ret
     return ret
   where
-    parsePileupPerSample chrom pos refA =
-        processPileupEntry chrom pos refA <$> A.decimal <* A.space <*> word <*
+    parsePileupPerSample refA =
+        processPileupEntry refA <$> A.decimal <* A.space <*> word <*
             A.space <*> word
 
-processPileupEntry :: Text -> Int -> Char -> Int -> Text -> Text -> Text
-processPileupEntry chrom pos refA cov readBaseString _ =
+processPileupEntry :: Char -> Int -> Text -> Text -> Text
+processPileupEntry refA cov readBaseString _ =
     if cov == 0 then "" else T.pack $ go (T.unpack readBaseString)
   where
     go (x:xs)
@@ -180,6 +178,7 @@ callGenotype mode minDepth refA alleles =
                 case res of
                     Nothing -> return MissingCall
                     Just [a] -> return $ HaploidCall a
+                    _ -> error "should not happen"
             RareCalling minSupport -> do
                 let groupedNonRefAlleles =
                         [(length g, head g) |
@@ -187,18 +186,19 @@ callGenotype mode minDepth refA alleles =
                          length g >= minSupport]
                 case groupedNonRefAlleles of
                     [] -> return $ DiploidCall refA refA
-                    [(n, a)] -> return $ DiploidCall refA a
+                    [(_, a)] -> return $ DiploidCall refA a
                     _ -> return MissingCall
             RandomDiploidCalling -> do
                 res <- sampleWithoutReplacement alleles 2
                 case res of
                     Nothing -> return MissingCall
                     Just [a1, a2] -> return $ DiploidCall a1 a2
+                    _ -> error "should not happen"
 
 sampleWithoutReplacement :: [a] -> Int -> IO (Maybe [a])
 sampleWithoutReplacement = go []
   where
-    go res xs 0 = return $ Just res
+    go res _ 0 = return $ Just res
     go res xs n
         | n > length xs = return Nothing
         | n == length xs = return $ Just (xs ++ res)
@@ -257,7 +257,7 @@ snpListCalling snpFileName pileupProducer = do
                             (replicate (length sampleNames) (-1))
                 (Just (SnpEntry snpChrom snpPos snpRef snpAlt),
                  Just pileupRow) -> do
-                    let PileupRow chrom pos refA entryPerSample = pileupRow
+                    let PileupRow _ _ refA entryPerSample = pileupRow
                     calls <- liftIO $ mapM (callGenotype mode minDepth refA)
                         [T.unpack alleles | alleles <- entryPerSample]
                     let genotypes = map (callToGenotype snpRef snpAlt) calls
@@ -308,7 +308,7 @@ printFreqSum freqSumProducer = do
         Left list -> return list
         Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
     let nrHaplotypes = case callingMode of
-            MajorityCalling _ -> 1
+            MajorityCalling _ -> 1 :: Int
             RandomCalling -> 1
             RareCalling _ -> 2
             RandomDiploidCalling -> 2
@@ -369,7 +369,7 @@ filterTransitions transversionsMode =
         TransitionsMissing ->
             P.map (\(FreqSumRow chrom pos ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else
-                        [-1 | c <- calls]
+                        [-1 | _ <- calls]
                 in  FreqSumRow chrom pos ref alt calls')
         AllSites -> cat
   where

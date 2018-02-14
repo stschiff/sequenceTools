@@ -1,18 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import SeqTools.OrderedZip (orderedZip)
-import SeqTools.Fasta (loadFastaChrom)
-import SeqTools.VCF (readVCF, VCFheader(..), VCFentry(..), SimpleVCFentry(..),
+import SequenceFormats.Fasta (loadFastaChrom)
+import SequenceFormats.VCF (readVCF, VCFheader(..), VCFentry(..), SimpleVCFentry(..),
                      isBiallelicSnp, isTransversionSnp, liftParsingErrors, getDosages,
                      makeSimpleVCFentry)
+import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), eigenstratSnpParser)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (liftIO, MonadIO)
-import qualified Data.Attoparsec.Text as A
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.ByteString.Char8 as B
-import Data.Char (isSpace)
 import Data.Monoid ((<>))
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -27,19 +26,10 @@ import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
 import qualified Pipes.Safe.Prelude as S
 import qualified Pipes.Text.IO as PT
-import System.IO (IOMode(..), Handle, withFile)
+import System.IO (IOMode(..), Handle)
 import Turtle.Format (format, d, s, (%))
-import Turtle.Prelude (err)
 
 data ProgOpt = ProgOpt (Maybe FilePath) (Maybe FilePath) FilePath String (Maybe String) Bool
-
-data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)-- Chrom Pos Ref Alt
-
--- main :: IO ()
--- main = do
---     prod <- loadFastaChrom "/data/schiffels/ReferenceGenome/hs37d5.fa" "10"
---     let loop = for (prod >-> PB.take 200) $ \b -> liftIO $ print b
---     runEffect loop
 
 main :: IO ()
 main = readOptions >>= runMain
@@ -121,18 +111,18 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> String -> FilePath ->
                                           Maybe B.ByteString -> Producer SimpleVCFentry m r
 runJointly vcfBody nrInds chrom snpPosFile refSeq =
-    let snpProd = parsed snpParser (PT.readFile snpPosFile) >->
-                  P.filter (\(SnpEntry c _ _ _) -> c == T.pack chrom) >>= liftParsingErrors
+    let snpProd = parsed eigenstratSnpParser (PT.readFile snpPosFile) >->
+                  P.filter (\(EigenstratSnpEntry c _ _ _) -> c == T.pack chrom) >>= liftParsingErrors
         jointProd = snd <$> orderedZip cmp snpProd vcfBody
     in  jointProd >-> processVcfWithSnpFile nrInds refSeq
   where
-    cmp (SnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
+    cmp (EigenstratSnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
 
 processVcfWithSnpFile :: (MonadIO m) => Int -> Maybe B.ByteString ->
-                         Pipe (Maybe SnpEntry, Maybe VCFentry) SimpleVCFentry m r
+                         Pipe (Maybe EigenstratSnpEntry, Maybe VCFentry) SimpleVCFentry m r
 processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
     case jointEntry of
-        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
+        (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
             let dosages = case refSeq of
                               Just seq_ -> let nuc = seq_ `B.index` (fromIntegral snpPos - 1)
                                            in  if nuc == snpRef
@@ -144,7 +134,7 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
                               Nothing -> replicate nrInds Nothing
             yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef) [T.singleton snpAlt]
                                    dosages
-        (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
+        (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
             dosages <- case getDosages vcfEntry of
                 Right dos -> return dos
                 Left err -> liftIO . throwIO $ AssertionFailed err
@@ -173,26 +163,6 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
         Just 1 -> Just 1
         Just 2 -> Just 0
         _ -> Nothing
-
-snpParser :: A.Parser SnpEntry
-snpParser = do
-    A.skipMany A.space
-    void word
-    A.skipMany1 A.space
-    chrom <- word
-    A.skipMany1 A.space
-    void word
-    A.skipMany1 A.space
-    pos <- A.decimal
-    A.skipMany1 A.space
-    ref <- A.satisfy (A.inClass "ACTGX")
-    A.skipMany1 A.space
-    alt <- A.satisfy (A.inClass "ACTGX")
-    void A.endOfLine
-    let ret = SnpEntry chrom pos ref alt
-    return ret
-  where
-    word = A.takeTill isSpace
 
 runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer SimpleVCFentry m r
 runSimple vcfBody chrom = for vcfBody $ \e -> do
