@@ -3,9 +3,9 @@
 import SeqTools.OrderedZip (orderedZip)
 import SequenceFormats.Fasta (loadFastaChrom)
 import SequenceFormats.VCF (readVCF, VCFheader(..), VCFentry(..), SimpleVCFentry(..),
-                     isBiallelicSnp, isTransversionSnp, liftParsingErrors, getDosages,
+                     isBiallelicSnp, isTransversionSnp, getDosages,
                      makeSimpleVCFentry)
-import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), eigenstratSnpParser)
+import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (forM_, when)
@@ -20,7 +20,6 @@ import Data.Version (showVersion)
 import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
-import Pipes.Attoparsec (parsed)
 import qualified Pipes.ByteString as PB
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
@@ -29,7 +28,7 @@ import qualified Pipes.Text.IO as PT
 import System.IO (IOMode(..), Handle)
 import Turtle.Format (format, d, s, (%))
 
-data ProgOpt = ProgOpt (Maybe FilePath) (Maybe FilePath) FilePath String (Maybe String) Bool
+data ProgOpt = ProgOpt (Maybe FilePath) (Maybe FilePath) FilePath T.Text (Maybe T.Text) Bool
 
 main :: IO ()
 main = readOptions >>= runMain
@@ -65,11 +64,11 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
                                   OP.metavar "<FILE_PREFIX>" <>
                                   OP.help "specify the filenames for the EigenStrat SNP and IND \
                                   \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt")
-    parseChrom = OP.strOption (OP.long "chrom" <> OP.short 'c' <>
+    parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
                             OP.metavar "<CHROM>" <> OP.help "specify the chromosome in the VCF \
                             \file to \
                             \call from. This is important if a SNP file has been given.")
-    parseOutChrom = OP.option (Just <$> OP.str) (OP.long "outChrom" <> OP.value Nothing <>
+    parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <> OP.value Nothing <>
                                     OP.metavar "<CHROM>" <>
                                    OP.help "specify the output chromosome name" <> OP.value Nothing)
     parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <>
@@ -92,15 +91,15 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
                     refSeq <- case fillHomRef of
                             Just fp -> do
                                 S.withFile fp ReadMode $ \fh -> do
-                                    bs <- liftIO $ loadFastaChrom fh chrom >>= PB.toLazyM
+                                    bs <- liftIO $ loadFastaChrom fh (T.unpack chrom) >>= PB.toLazyM
                                     return $ Just (BL.toStrict bs)
                             Nothing -> return Nothing
                     return $ runJointly vcfBodyBiAllelic nrInds chrom fn refSeq
-                Nothing -> return $ runSimple vcfBodyBiAllelic chrom
+                Nothing -> return $ runSimple vcfBodyBiAllelic (T.unpack chrom)
         let outChrom = case maybeOutChrom of
                 Just c -> c
                 Nothing -> chrom
-        let eigenStratPipe = S.withFile snpOut WriteMode (printEigenStrat outChrom)
+        let eigenStratPipe = S.withFile snpOut WriteMode (printEigenStrat (T.unpack outChrom))
         runEffect $ vcfProducer >-> filterTransitions >-> eigenStratPipe >-> printToStdOut
   where
     printToStdOut = for cat (liftIO . T.putStrLn)
@@ -108,11 +107,11 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
                         then P.filter (\e -> isTransversionSnp (sVCFref e) (sVCFalt e))
                         else cat
 
-runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> String -> FilePath ->
+runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> T.Text -> FilePath ->
                                           Maybe B.ByteString -> Producer SimpleVCFentry m r
 runJointly vcfBody nrInds chrom snpPosFile refSeq =
-    let snpProd = parsed eigenstratSnpParser (PT.readFile snpPosFile) >->
-                  P.filter (\(EigenstratSnpEntry c _ _ _) -> c == T.pack chrom) >>= liftParsingErrors
+    let snpProd = readEigenstratSnpFile snpPosFile >->
+            P.filter (\(EigenstratSnpEntry c _ _ _) -> c == chrom)
         jointProd = snd <$> orderedZip cmp snpProd vcfBody
     in  jointProd >-> processVcfWithSnpFile nrInds refSeq
   where
@@ -132,8 +131,8 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
                                                    then replicate nrInds (Just 2)
                                                    else replicate nrInds (Nothing)
                               Nothing -> replicate nrInds Nothing
-            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef) [T.singleton snpAlt]
-                                   dosages
+            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef)
+                [T.singleton snpAlt] dosages
         (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
             dosages <- case getDosages vcfEntry of
                 Right dos -> return dos
@@ -154,8 +153,8 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
                                      then map flipDosages dosages
                                      else replicate nrInds Nothing
                         _ -> replicate nrInds Nothing
-            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef) [T.singleton snpAlt]
-                                   normalizedDosages
+            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef)
+                [T.singleton snpAlt] normalizedDosages
         _ -> return ()
   where
     flipDosages dos = case dos of

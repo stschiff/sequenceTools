@@ -1,23 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import qualified SequenceFormats.Eigenstrat as E
-import SequenceFormats.FreqSum (parseFreqSum, FreqSumHeader(..), FreqSumEntry(..))
-import SequenceFormats.Eigenstrat (streamEigenstratGeno, streamEigenstratSnp)
+import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader(..), 
+    FreqSumEntry(..))
+import SequenceFormats.Eigenstrat (readEigenstrat)
 
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, unpack)
 import Data.Version (showVersion)
 import Paths_sequenceTools (version)
 import Pipes (for, Producer, runEffect, (>->), yield)
 import qualified Pipes.Prelude as P
+import Pipes.Safe (MonadSafe, runSafeT)
 import Prelude hiding (FilePath)
-import System.IO (IOMode(..), openFile, stdin)
 import Turtle hiding (stdin, x)
 
 data ProgOpt = ProgOpt InputOption Bool
 
 data InputOption = FreqsumInput (Maybe FilePath) | EigenstratInput FilePath FilePath FilePath
 
-data InputEntry = InputEntry Int [Genotype] deriving (Show)
+data InputEntry = InputEntry Text [Genotype] deriving (Show)
 data Genotype = HomRef | HomAlt | Het | Missing deriving (Show)
 
 main :: IO ()
@@ -42,11 +43,11 @@ parseFreqsumInput =
         else FreqsumInput . Just . fromText $ p
 
 parseEigenstratInput :: Parser InputOption
-parseEigenstratInput = EigenstratInput <$> parseSnpFile <*> parseIndFile <*> parseGenoFile
+parseEigenstratInput = EigenstratInput <$> parseGenoFile <*> parseSnpFile <*> parseIndFile
   where
+    parseGenoFile = optPath "eigenstratGeno" 'g' "Eigenstrat Geno File"
     parseSnpFile = optPath "eigenstratSnp" 's' "Eigenstrat Snp File"
     parseIndFile = optPath "eigenstratInd" 'i' "Eigenstrat Ind File"
-    parseGenoFile = optPath "eigenstratGeno" 'g' "Eigenstrat Geno File"
 
 runWithOpts :: ProgOpt -> IO ()
 runWithOpts (ProgOpt inputOpt optVersion) = do
@@ -54,22 +55,20 @@ runWithOpts (ProgOpt inputOpt optVersion) = do
     then do
         let v = pack . showVersion $ version
         echo . repr $ format ("This is genoStats from sequenceTools version "%s) v
-    else do
+    else runSafeT $ do
         (names, entryProducer) <- case inputOpt of 
             FreqsumInput fsFile -> runWithFreqSum fsFile
             EigenstratInput genoFile snpFile indFile -> runWithEigenstrat genoFile snpFile indFile
-        print names
+        liftIO . print $ names
         runEffect $ entryProducer >-> P.print
         
         -- collectStats names entryProducer >>= reportResults
 
-runWithFreqSum :: Maybe FilePath -> IO ([Text], Producer InputEntry IO ())
+runWithFreqSum :: (MonadSafe m) => Maybe FilePath -> m ([Text], Producer InputEntry m ())
 runWithFreqSum fsFile = do
-    handle <- case fsFile of
-        Nothing -> return stdin
-        Just fn -> openFile (repr fn) ReadMode
-    (FreqSumHeader namesStr nrHaps, fsProd) <- parseFreqSum handle
-    let names = map pack namesStr
+    (FreqSumHeader names nrHaps, fsProd) <- case fsFile of
+        Nothing -> readFreqSumStdIn
+        Just fn -> readFreqSumFile (unpack $ format fp fn)
     let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ counts) -> do
             let genotypes = do
                     (count', nrHap) <- zip counts nrHaps
@@ -82,16 +81,15 @@ runWithFreqSum fsFile = do
             yield $ InputEntry chrom genotypes
     return (names, prod)
 
-runWithEigenstrat :: FilePath -> FilePath -> FilePath -> IO ([Text], Producer InputEntry IO ())
+runWithEigenstrat :: (MonadSafe m) =>
+    FilePath -> FilePath -> FilePath -> m ([Text], Producer InputEntry m ())
 runWithEigenstrat genoFile snpFile indFile = do
-    indEntries <- E.readEigenstratInd (repr indFile)
+    let genoFile' = unpack $ format fp genoFile
+        snpFile' = unpack $ format fp snpFile
+        indFile' = unpack $ format fp indFile
+    (indEntries, genoStream) <- readEigenstrat genoFile' snpFile' indFile'
     let names = [name | E.EigenstratIndEntry name _ _ <- indEntries]
-    genoHandle <- openFile (repr $ format fp genoFile) ReadMode
-    snpHandle <- openFile (repr $ format fp snpFile) ReadMode
-    let genoProd = streamEigenstratGeno genoHandle
-        snpProd = streamEigenstratSnp snpHandle
-        zippedProducer = P.zip snpProd genoProd
-    let prod = for zippedProducer $ \(E.EigenstratSnpEntry chrom _ _ _, genoLine) -> do
+    let prod = for genoStream $ \(E.EigenstratSnpEntry chrom _ _ _, genoLine) -> do
             let genotypes = do
                     geno <- genoLine
                     case geno of
@@ -99,11 +97,5 @@ runWithEigenstrat genoFile snpFile indFile = do
                         E.HomAlt -> return HomAlt
                         E.Het -> return Het
                         E.Missing -> return Missing
-            yield $ InputEntry (read . repr $ chrom) genotypes
+            yield $ InputEntry chrom genotypes
     return (names, prod)
-
-        
-        
-    
-    
-    
