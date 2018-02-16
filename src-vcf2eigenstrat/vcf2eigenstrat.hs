@@ -5,17 +5,18 @@ import SequenceFormats.Fasta (loadFastaChrom)
 import SequenceFormats.VCF (readVCF, VCFheader(..), VCFentry(..), SimpleVCFentry(..),
                      isBiallelicSnp, isTransversionSnp, getDosages,
                      makeSimpleVCFentry)
-import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile)
+import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat, 
+    GenoLine, GenoEntry(..), Sex(..), EigenstratIndEntry(..))
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
-import Control.Monad (forM_, when)
+import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.ByteString.Char8 as B
 import Data.Monoid ((<>))
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 -- import Debug.Trace (trace)
+import Data.Vector (fromList)
 import Data.Version (showVersion)
 import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
@@ -25,8 +26,7 @@ import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
 import qualified Pipes.Safe.Prelude as S
 import qualified Pipes.Text.IO as PT
-import System.IO (IOMode(..), Handle)
-import Turtle.Format (format, d, s, (%))
+import System.IO (IOMode(..))
 
 data ProgOpt = ProgOpt (Maybe FilePath) (Maybe FilePath) FilePath T.Text (Maybe T.Text) Bool
 
@@ -80,11 +80,10 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
         (vcfHeader, vcfBody) <- readVCF PT.stdin
         let snpOut = outPrefix ++ ".snp.txt"
             indOut = outPrefix ++ ".ind.txt"
+            genoOut = outPrefix ++ ".geno.txt"
             VCFheader _ sampleNames = vcfHeader
             nrInds = length sampleNames
-        S.withFile indOut WriteMode $ \indOutHandle -> do
-            forM_ sampleNames $ \n -> do
-                liftIO . T.hPutStrLn indOutHandle . T.intercalate "\t" $ [n, "U", "Unknown"]
+            indEntries = [EigenstratIndEntry n Unknown "Unknown" | n <- sampleNames]
         let vcfBodyBiAllelic = vcfBody >-> P.filter (\e -> isBiallelicSnp (vcfRef e) (vcfAlt e))
         vcfProducer <- case snpPosFile of
                 Just fn -> do
@@ -99,10 +98,9 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
         let outChrom = case maybeOutChrom of
                 Just c -> c
                 Nothing -> chrom
-        let eigenStratPipe = S.withFile snpOut WriteMode (printEigenStrat (T.unpack outChrom))
-        runEffect $ vcfProducer >-> filterTransitions >-> eigenStratPipe >-> printToStdOut
+        runEffect $ vcfProducer >-> filterTransitions >-> eigenStratPipe outChrom >->
+            writeEigenstrat genoOut snpOut indOut indEntries
   where
-    printToStdOut = for cat (liftIO . T.putStrLn)
     filterTransitions = if transversionsOnly
                         then P.filter (\e -> isTransversionSnp (sVCFref e) (sVCFalt e))
                         else cat
@@ -172,17 +170,16 @@ runSimple vcfBody chrom = for vcfBody $ \e -> do
             yield e'
         Left err -> (liftIO . throwIO) (AssertionFailed err)
 
-printEigenStrat :: (MonadIO m) => String -> Handle -> Pipe SimpleVCFentry T.Text m r
-printEigenStrat outChrom snpOutHandle = for cat $ \(SimpleVCFentry _ pos ref alt dosages) -> do
-    let n = format (s%"_"%d) (T.pack outChrom) pos
-        snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n (T.pack outChrom) pos ref (head alt)
-    liftIO . T.hPutStrLn snpOutHandle $ snpLine
-    yield . T.concat . map (format d . toEigenStratNum) $ dosages
+eigenStratPipe :: (MonadIO m) => T.Text -> Pipe SimpleVCFentry (EigenstratSnpEntry, GenoLine) m r
+eigenStratPipe outChrom = P.map vcfToEigenstrat
   where
-    toEigenStratNum :: Maybe Int -> Int
-    toEigenStratNum c = case c of
-        Just 0 -> 2
-        Just 1 -> 1
-        Just 2 -> 0
-        Nothing -> 9
-        _ -> error ("unknown dosage " ++ show c)
+    vcfToEigenstrat (SimpleVCFentry _ pos ref alt dosages) =
+        let snpEntry = EigenstratSnpEntry outChrom pos (T.head ref) (T.head . head $ alt)
+            genoLine = fromList [dosageToCall d | d <- dosages]
+        in  (snpEntry, genoLine)
+    dosageToCall d = case d of
+        Just 0 -> HomRef
+        Just 1 -> Het
+        Just 2 -> HomAlt
+        Nothing -> Missing
+        _ -> error ("unknown dosage " ++ show d)

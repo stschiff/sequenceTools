@@ -1,7 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import SeqTools.OrderedZip (orderedZip)
-import SequenceFormats.VCF (liftParsingErrors)
+import SequenceFormats.Utils (liftParsingErrors)
+import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..), GenoLine, 
+    EigenstratIndEntry(..), Sex(..), writeEigenstrat, GenoEntry(..))
+import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad.Trans.Class (lift)
@@ -13,17 +16,16 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Version (showVersion)
+import Data.Vector (fromList)
 -- import Debug.Trace (trace)
 import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
-import Pipes (Consumer, Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
+import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import Pipes.Attoparsec (parsed)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
-import Pipes.Safe.Prelude (withFile)
 import qualified Pipes.Text.IO as PT
 import Prelude hiding (FilePath)
-import System.IO (IOMode(..))
 import System.Random (randomRIO, mkStdGen, setStdGen)
 import Turtle hiding (tab, cat, stderr, err, sort, sortOn, x, g)
 
@@ -48,9 +50,6 @@ data CallingMode = MajorityCalling Bool | RandomCalling | RareCalling Int |
 data TransitionsMode =
     TransitionsMissing | SkipTransitions | AllSites deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
-data FreqSumRow = FreqSumRow T.Text Int Char Char [Int] deriving (Show)
-data SnpEntry = SnpEntry T.Text Int Char Char deriving (Show)
-                      -- Chrom  Pos Ref    Alt
 data PileupRow = PileupRow T.Text Int Char [Text] deriving (Show)
 type App = ReaderT ProgOpt (SafeT IO)
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall
@@ -75,8 +74,8 @@ runWithOpts = do
             Just fn -> snpListCalling fn pileupProducer
     outFormat <- asks optOutFormat
     case outFormat of
-        FreqSumFormat -> printFreqSum freqSumProducer
-        EigenStrat -> printEigenStrat freqSumProducer
+        FreqSumFormat -> outputFreqSum freqSumProducer
+        EigenStrat -> outputEigenStrat freqSumProducer
 
 setRandomSeed :: App ()
 setRandomSeed = do
@@ -124,7 +123,7 @@ word :: A.Parser T.Text
 word = A.takeTill isSpace
 
 simpleCalling :: Producer PileupRow (SafeT IO) () ->
-    App (Producer FreqSumRow (SafeT IO) ())
+    App (Producer FreqSumEntry (SafeT IO) ())
 simpleCalling pileupProducer = do
     mode <- getCallingMode
     minDepth <- asks optMinDepth
@@ -137,7 +136,7 @@ simpleCalling pileupProducer = do
             let altA = head altAlleles
                 genotypes = map (callToGenotype refA altA) calls
             when (refA /= 'N' && any (>0) genotypes) $
-                yield (FreqSumRow chrom pos refA altA genotypes)
+                yield (FreqSumEntry chrom pos refA altA genotypes)
 
 getCallingMode :: App CallingMode
 getCallingMode = do
@@ -239,33 +238,32 @@ findAlternativeAlleles refA calls =
             in  [a | (n, a) <- groupedNonRefAlleles, n == majorityCount]
 
 snpListCalling :: FilePath -> Producer PileupRow (SafeT IO) () ->
-    App (Producer FreqSumRow (SafeT IO) ())
+    App (Producer FreqSumEntry (SafeT IO) ())
 snpListCalling snpFileName pileupProducer = do
     sampleNameSpec <- asks optSampleNames
     sampleNames <- case sampleNameSpec of
         Left list -> return list
         Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
-    let snpTextProd = PT.readFile ((T.unpack . format fp) snpFileName)
-        snpProd = parsed snpParser snpTextProd >>= liftParsingErrors
+    let snpProd = readEigenstratSnpFile (T.unpack . format fp $ snpFileName)
         jointProd = orderedZip cmp snpProd pileupProducer
     mode <- getCallingMode
     minDepth <- asks optMinDepth
     let ret = for jointProd $ \jointEntry ->
             case jointEntry of
-                (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Nothing) ->
-                    yield $ FreqSumRow snpChrom snpPos snpRef snpAlt
+                (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Nothing) ->
+                    yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt
                             (replicate (length sampleNames) (-1))
-                (Just (SnpEntry snpChrom snpPos snpRef snpAlt),
+                (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt),
                  Just pileupRow) -> do
                     let PileupRow _ _ refA entryPerSample = pileupRow
                     calls <- liftIO $ mapM (callGenotype mode minDepth refA)
                         [T.unpack alleles | alleles <- entryPerSample]
                     let genotypes = map (callToGenotype snpRef snpAlt) calls
-                    yield (FreqSumRow snpChrom snpPos snpRef snpAlt genotypes)
+                    yield (FreqSumEntry snpChrom snpPos snpRef snpAlt genotypes)
                 _ -> return ()
     return (fst <$> ret)
   where
-    cmp (SnpEntry snpChrom snpPos _ _) (PileupRow pChrom pPos _ _) =
+    cmp (EigenstratSnpEntry snpChrom snpPos _ _) (PileupRow pChrom pPos _ _) =
         case snpChrom `chromNameCompare` pChrom of
             LT -> LT
             GT -> GT
@@ -280,26 +278,8 @@ snpListCalling snpFileName pileupProducer = do
                 GT -> GT
                 EQ -> c1Num `compare` c2Num
 
-snpParser :: A.Parser SnpEntry
-snpParser = do
-    _ <- many A.space
-    _ <- word
-    _ <- A.many1 A.space
-    chrom <- word
-    _ <- A.many1 A.space
-    _ <- A.double
-    _ <- A.many1 A.space
-    pos <- A.decimal
-    _ <- A.many1 A.space
-    ref <- A.satisfy (A.inClass "ACTG")
-    _ <- A.many1 A.space
-    alt <- A.satisfy (A.inClass "ACTG")
-    _ <- A.satisfy (\c -> c == '\r' || c == '\n')
-    let ret = SnpEntry chrom pos ref alt
-    return ret
-
-printFreqSum :: Producer FreqSumRow (SafeT IO) () -> App ()
-printFreqSum freqSumProducer = do
+outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()
+outputFreqSum freqSumProducer = do
     outChrom <- asks optOutChrom
     transitionsOnly <- asks optTransitionsOnly
     sampleNameSpec <- asks optSampleNames
@@ -312,22 +292,18 @@ printFreqSum freqSumProducer = do
             RandomCalling -> 1
             RareCalling _ -> 2
             RandomDiploidCalling -> 2
-    echo . unsafeTextToLine . format ("#CHROM\tPOS\tREF\tALT\t"%s) $
-        T.intercalate "\t"
-            [format (s%"("%d%")") n nrHaplotypes | n <- sampleNames]
-    lift . runEffect $ freqSumProducer >->
-        filterTransitions transitionsOnly >->
-        P.map (showFreqSum outChrom) >-> printToStdOut
+    let header' = FreqSumHeader sampleNames [nrHaplotypes | _ <- sampleNames]
+        outProd = freqSumProducer >-> filterTransitions transitionsOnly >->
+            P.map (correctChrom outChrom)
+    lift . runEffect $ outProd >-> printFreqSumStdOut header'
   where
-    showFreqSum outChrom (FreqSumRow chrom pos ref alt calls) =
-        let newChrom = fromMaybe chrom outChrom
-        in  format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) newChrom pos
-                (T.singleton ref) (T.singleton alt) callsStr
-      where
-        callsStr = (T.intercalate "\t" . map (format d)) calls
+    correctChrom outChrom =
+        case outChrom of
+            Just c -> \fse -> fse {fsChrom = c}
+            Nothing -> id
 
-printEigenStrat :: Producer FreqSumRow (SafeT IO) () -> App ()
-printEigenStrat freqSumProducer = do
+outputEigenStrat :: Producer FreqSumEntry (SafeT IO) () -> App ()
+outputEigenStrat freqSumProducer = do
     outChrom <- asks optOutChrom
     transitionsMode <- asks optTransitionsOnly
     sampleNameSpec <- asks optSampleNames
@@ -345,32 +321,26 @@ printEigenStrat freqSumProducer = do
         Nothing -> liftIO . throwIO $
             AssertionFailed "need an eigenstratPrefix for EigenStratFormat"
         Just fn -> do
-            let snpOut = fn <.> "snp.txt"
-                indOut = fn <.> "ind.txt"
+            let snpOut = T.unpack . format fp $ fn <.> "snp.txt"
+                indOut = T.unpack . format fp $ fn <.> "ind.txt"
+                genoOut = T.unpack . format fp $ fn <.> "geno.txt"
             p <- asks optSamplePopName
-            lift . withFile (T.unpack . format fp $ indOut) WriteMode $
-                \indOutHandle ->
-                    sequence_ [liftIO $ T.hPutStrLn indOutHandle
-                               (format (s%"\tU\t"%s) n p) | n <- sampleNames]
-            lift . withFile (T.unpack . format fp $ snpOut) WriteMode $
-                \snpOutHandle -> runEffect $
-                    freqSumProducer >-> filterTransitions transitionsMode >->
-                        printEigenStratRow diploidizeCall outChrom snpOutHandle >-> printToStdOut
-
-printToStdOut :: Consumer T.Text (SafeT IO) ()
-printToStdOut = for cat (liftIO . T.putStrLn)
+            let indEntries = [EigenstratIndEntry n Unknown p | n <- sampleNames]
+            lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
+                        toEigenstrat diploidizeCall outChrom >->
+                        writeEigenstrat genoOut snpOut indOut indEntries
 
 filterTransitions :: TransitionsMode ->
-    Pipe FreqSumRow FreqSumRow (SafeT IO) ()
+    Pipe FreqSumEntry FreqSumEntry (SafeT IO) ()
 filterTransitions transversionsMode =
     case transversionsMode of
         SkipTransitions ->
-            P.filter (\(FreqSumRow _ _ ref alt _) -> isTransversion ref alt)
+            P.filter (\(FreqSumEntry _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
-            P.map (\(FreqSumRow chrom pos ref alt calls) ->
+            P.map (\(FreqSumEntry chrom pos ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else
                         [-1 | _ <- calls]
-                in  FreqSumRow chrom pos ref alt calls')
+                in  FreqSumEntry chrom pos ref alt calls')
         AllSites -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt
@@ -378,30 +348,27 @@ filterTransitions transversionsMode =
         ((ref == 'G') && (alt == 'A')) || ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
 
-printEigenStratRow :: Bool -> Maybe Text -> Handle ->
-    Pipe FreqSumRow Text (SafeT IO) r
-printEigenStratRow diploidizeCall outChrom snpOutHandle =
-    for cat $ \(FreqSumRow chrom pos ref alt calls) -> do
-        let newChrom = fromMaybe chrom outChrom
-        let n = format (s%"_"%d) newChrom pos
-            snpLine = format (s%"\t"%s%"\t0\t"%d%"\t"%s%"\t"%s) n newChrom pos
-                (T.singleton ref) (T.singleton alt)
-        liftIO . T.hPutStrLn snpOutHandle $ snpLine
-        yield . T.concat . map (format d . toEigenStratNum) $ calls
+toEigenstrat :: Bool -> Maybe Text -> Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+toEigenstrat diploidizeCall outChrom = P.map toEigenstrat'
   where
-    toEigenStratNum c =
+    toEigenstrat' (FreqSumEntry chrom pos ref alt calls) =
+        let newChrom = fromMaybe chrom outChrom
+            snpEntry = EigenstratSnpEntry newChrom pos ref alt
+            geno = fromList . map toGenoCall $ calls
+        in  (snpEntry, geno)
+    toGenoCall c =
         if diploidizeCall then
             case c of
-                0 -> 2 :: Int
-                1 -> 0
-                -1 -> 9
+                0 -> HomRef
+                1 -> HomAlt
+                -1 -> Missing
                 _ -> error "illegal call for pseudo-haploid Calling method"
         else
             case c of
-                0 -> 2 :: Int
-                1 -> 1
-                2 -> 0
-                -1 -> 9
+                0 -> HomRef
+                1 -> Het
+                2 -> HomAlt
+                -1 -> Missing
                 _ -> error ("unknown genotype " ++ show c)
 
 argParser :: OP.Parser ProgOpt

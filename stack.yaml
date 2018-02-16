@@ -3,7 +3,7 @@ packages:
 - location: .
 - location:
     git: https://github.com/stschiff/sequence-formats.git
-    commit: b90cd7a6c9b461be863168a5b008663927c6f97b
+    commit: 9991eeaa789b463ac3766a46c9def03575fb79fb
   extra-dep: true
 extra-deps: []
 resolver: lts-10.5

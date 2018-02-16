@@ -9,6 +9,7 @@ import Control.Foldl (purely, Fold)
 import Control.Monad (forM_)
 import Data.Text (Text, pack, unpack)
 import Data.Text.IO (putStrLn)
+import Data.Vector (toList)
 import Data.Version (showVersion)
 import qualified Data.Vector as V
 import Lens.Family2 (view)
@@ -103,7 +104,7 @@ runWithEigenstrat genoFile snpFile indFile = do
     let names = [name | E.EigenstratIndEntry name _ _ <- indEntries]
     let prod = for genoStream $ \(E.EigenstratSnpEntry chrom _ _ _, genoLine) -> do
             let genotypes = V.fromList $ do
-                    geno <- genoLine
+                    geno <- toList genoLine
                     case geno of
                         E.HomRef -> return HomRef
                         E.HomAlt -> return HomAlt
