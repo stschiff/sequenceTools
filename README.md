@@ -6,7 +6,7 @@ This repository contains some programs that I use for processing sequencing data
 
 The main tool in this repository is the program `pileupCaller` to sample alleles from low coverage sequence data. The first step is to generate a “pileup” file at all positions you wish to genotype. To do that, here is a typical command line, which restricts to mapping and base quality of 30:
 
-    samtools mpileup -B -q30 -Q30 -l <list_of_positions.txt> \
+    samtools mpileup -R -B -q30 -Q30 -l <list_of_positions.txt> \
         -f <reference_genome.fasta> \
         Sample1.bam Sample2.bam Sample3.bam > pileup.txt
 
@@ -26,7 +26,7 @@ You can also get some help by typing `pileupCaller -h`, which shows a lot more o
 
 Note that you can also fuse the two steps above into one unix pipe:
 
-    samtools mpileup -B -q30 -Q30 -l <list_of_positions.txt> \
+    samtools mpileup -R -B -q30 -Q30 -l <list_of_positions.txt> \
         -f <reference_genome.fasta> \
         Sample1.bam Sample2.bam Sample3.bam | \
     pileupCaller --sampleNames Sample1,Sample2,Sample3 \
@@ -35,7 +35,7 @@ Note that you can also fuse the two steps above into one unix pipe:
 
 There is however an issue here: If you have aligned your read data to a version of the reference genome that uses `chr1`, `chr2` and so on as chromosome names, the resulting Eigenstrat file will be valid, but won't merge with other Eigenstrat datasets that use chromosome names `1`, `2` and so on. I would therefore recommend to strip the `chr` from your chromosome names if necessary. You can do that easily using a little UNIX filter using the `sed` tool. In the full pipeline, it looks like this:
 
-    samtools mpileup -B -q30 -Q30 -l <list_of_positions.txt> \
+    samtools mpileup -R -B -q30 -Q30 -l <list_of_positions.txt> \
         -f <reference_genome.fasta> \
         Sample1.bam Sample2.bam Sample3.bam | sed 's/chr//' | \
     pileupCaller --sampleNames Sample1,Sample2,Sample3 \
