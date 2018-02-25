@@ -14,11 +14,12 @@ import Data.Version (showVersion)
 import qualified Data.Vector as V
 import Lens.Family2 (view)
 import Paths_sequenceTools (version)
-import Pipes (for, Producer, runEffect, (>->), yield, Consumer, cat)
+import Pipes (for, Producer, (>->), yield, Consumer, cat)
 import Pipes.Group (groupsBy, folds)
 import Pipes.Safe (MonadSafe, runSafeT)
+import Pipes.Prelude (tee, fold)
 import Prelude hiding (FilePath, putStrLn)
-import Turtle hiding (stdin, x, view, cat)
+import Turtle hiding (stdin, x, view, cat, fold)
 
 data ProgOpt = ProgOpt InputOption Bool
 
@@ -75,7 +76,10 @@ runWithOpts (ProgOpt inputOpt optVersion) = do
             FreqsumInput fsFile -> runWithFreqSum fsFile
             EigenstratInput genoFile snpFile indFile -> runWithEigenstrat genoFile snpFile indFile
         err . unsafeTextToLine $ format ("processing samples: "%w) names
-        runEffect $ runStats names entryProducer >-> reportStats names
+        let p = runStats names entryProducer >-> tee (reportStats names)
+        totalReport <- purely fold (accumulateAllChromStats names) p
+        printReports names totalReport
+        -- runEffect $ runStats names entryProducer >-> tee (reportStats names) >-> reportTotal names
 
 runWithFreqSum :: (MonadSafe m) => Maybe FilePath -> m ([Text], Producer InputEntry m ())
 runWithFreqSum fsFile = do
@@ -144,7 +148,24 @@ runStatsPerChromPerSample i = Fold step initial extract
 reportStats :: (MonadIO m) => [Text] -> Consumer (Text, StatsReportAllSamples) m ()
 reportStats names = do
     liftIO . putStrLn $ format ("Chrom\tSample\tMissing\tHomRef\tHomAlt\tHet")
-    for cat $ \(chrom, reports) -> do
-        forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) -> do
-            liftIO . putStrLn $
-                format (s%"\t"%s%"\t"%d%"\t"%d%"\t"%d%"\t"%d) chrom n mis ref alt het
+    for cat $ \(chrom, reports) -> printReports names (chrom, reports)
+
+printReports :: (MonadIO m) => [Text] -> (Text, StatsReportAllSamples) -> m ()
+printReports names (chrom, reports) =
+    forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) ->
+        liftIO . putStrLn $ format (s%"\t"%s%"\t"%d%"\t"%d%"\t"%d%"\t"%d) chrom n mis ref alt het
+
+accumulateAllChromStats :: [Text] -> Fold (Text, StatsReportAllSamples) (Text, StatsReportAllSamples)
+accumulateAllChromStats names = Fold step initial extract
+  where
+    step :: StatsReportAllSamples -> (Text, StatsReportAllSamples) -> StatsReportAllSamples
+    step sumReports (_, newReports) = do
+        (StatsReport smiss shomr shoma shet, StatsReport miss homr homa het) <-
+                zip sumReports newReports
+        return $ StatsReport (smiss + miss) (shomr + homr) (shoma + homa) (shet + het)
+    initial :: StatsReportAllSamples
+    initial = [StatsReport 0 0 0 0 | _ <- names]
+    extract :: StatsReportAllSamples -> (Text, StatsReportAllSamples)
+    extract r = ("Total", r)
+
+        
