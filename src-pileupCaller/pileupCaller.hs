@@ -12,7 +12,7 @@ import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
 import qualified Data.Attoparsec.Text as A
 import Data.Char (isSpace, isDigit, toUpper)
 import Data.List (partition, sortOn, group, sort)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, catMaybes)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Version (showVersion)
@@ -135,7 +135,7 @@ simpleCalling pileupProducer = do
         when (length altAlleles == 1) $ do
             let altA = head altAlleles
                 genotypes = map (callToGenotype refA altA) calls
-            when (refA /= 'N' && any (>0) genotypes) $
+            when (refA /= 'N' && (sum . catMaybes) genotypes > 0) $
                 yield (FreqSumEntry chrom pos refA altA genotypes)
 
 getCallingMode :: App CallingMode
@@ -208,17 +208,17 @@ sampleWithoutReplacement = go []
                 go (a:res) xs' (n - 1)
     remove i xs = let (ys, zs) = splitAt i xs in ys ++ tail zs
 
-callToGenotype :: Char -> Char -> Call -> Int
+callToGenotype :: Char -> Char -> Call -> Maybe Int
 callToGenotype refA altA call = case call of
-    HaploidCall a | a == refA -> 0
-                  | a == altA -> 1
-                  | otherwise -> -1
-    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> 0
-                      | (a1, a2) == (refA, altA) -> 1
-                      | (a1, a2) == (altA, refA) -> 1
-                      | (a1, a2) == (altA, altA) -> 2
-                      | otherwise                -> -1
-    MissingCall -> -1
+    HaploidCall a | a == refA -> Just 0
+                  | a == altA -> Just 1
+                  | otherwise -> Nothing
+    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> Just 0
+                      | (a1, a2) == (refA, altA) -> Just 1
+                      | (a1, a2) == (altA, refA) -> Just 1
+                      | (a1, a2) == (altA, altA) -> Just 2
+                      | otherwise                -> Nothing
+    MissingCall -> Nothing
 
 findAlternativeAlleles :: Char -> [Call] -> String
 findAlternativeAlleles refA calls =
@@ -252,7 +252,7 @@ snpListCalling snpFileName pileupProducer = do
             case jointEntry of
                 (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Nothing) ->
                     yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt
-                            (replicate (length sampleNames) (-1))
+                            (replicate (length sampleNames) Nothing)
                 (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt),
                  Just pileupRow) -> do
                     let PileupRow _ _ refA entryPerSample = pileupRow
@@ -338,8 +338,7 @@ filterTransitions transversionsMode =
             P.filter (\(FreqSumEntry _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
             P.map (\(FreqSumEntry chrom pos ref alt calls) ->
-                let calls' = if isTransversion ref alt then calls else
-                        [-1 | _ <- calls]
+                let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
                 in  FreqSumEntry chrom pos ref alt calls')
         AllSites -> cat
   where
@@ -359,16 +358,16 @@ toEigenstrat diploidizeCall outChrom = P.map toEigenstrat'
     toGenoCall c =
         if diploidizeCall then
             case c of
-                0 -> HomRef
-                1 -> HomAlt
-                -1 -> Missing
+                Just 0 -> HomRef
+                Just 1 -> HomAlt
+                Nothing -> Missing
                 _ -> error "illegal call for pseudo-haploid Calling method"
         else
             case c of
-                0 -> HomRef
-                1 -> Het
-                2 -> HomAlt
-                -1 -> Missing
+                Just 0 -> HomRef
+                Just 1 -> Het
+                Just 2 -> HomAlt
+                Nothing -> Missing
                 _ -> error ("unknown genotype " ++ show c)
 
 argParser :: OP.Parser ProgOpt

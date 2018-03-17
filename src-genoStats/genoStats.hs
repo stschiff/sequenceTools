@@ -90,10 +90,10 @@ runWithFreqSum fsFile = do
             let genotypes = V.fromList $ do
                     (count', nrHap) <- zip counts nrHaps
                     case count' of
-                        0 -> return HomRef
-                        x | x == nrHap -> return HomAlt
-                          | x > 0 && x < nrHap -> return Het
-                          | x < 0 -> return Missing
+                        Just 0 -> return HomRef
+                        Just x | x == nrHap -> return HomAlt
+                               | x > 0 && x < nrHap -> return Het
+                        Nothing -> return Missing
                         _ -> error "should not happen"
             yield $ InputEntry chrom genotypes
     return (names, prod)

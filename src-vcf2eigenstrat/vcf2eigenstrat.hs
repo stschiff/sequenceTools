@@ -2,11 +2,11 @@
 
 import SeqTools.OrderedZip (orderedZip)
 import SequenceFormats.Fasta (loadFastaChrom)
-import SequenceFormats.VCF (readVCF, VCFheader(..), VCFentry(..), SimpleVCFentry(..),
-                     isBiallelicSnp, isTransversionSnp, getDosages,
-                     makeSimpleVCFentry)
+import SequenceFormats.VCF (readVCFfromStdIn, VCFheader(..), VCFentry(..),
+                     isBiallelicSnp, isTransversionSnp, getDosages, vcfToFreqSumEntry)
 import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat, 
     GenoLine, GenoEntry(..), Sex(..), EigenstratIndEntry(..))
+import SequenceFormats.FreqSum (FreqSumEntry(..), freqSumEntryToText)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (when)
@@ -15,6 +15,7 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.ByteString.Char8 as B
 import Data.Monoid ((<>))
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 -- import Debug.Trace (trace)
 import Data.Vector (fromList)
 import Data.Version (showVersion)
@@ -25,7 +26,6 @@ import qualified Pipes.ByteString as PB
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
 import qualified Pipes.Safe.Prelude as S
-import qualified Pipes.Text.IO as PT
 import System.IO (IOMode(..))
 
 data ProgOpt = ProgOpt (Maybe FilePath) (Maybe FilePath) FilePath T.Text (Maybe T.Text) Bool
@@ -77,7 +77,7 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
 runMain :: ProgOpt -> IO ()
 runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversionsOnly) =
     runSafeT $ do
-        (vcfHeader, vcfBody) <- readVCF PT.stdin
+        (vcfHeader, vcfBody) <- readVCFfromStdIn
         let snpOut = outPrefix ++ ".snp.txt"
             indOut = outPrefix ++ ".ind.txt"
             genoOut = outPrefix ++ ".geno.txt"
@@ -102,11 +102,12 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
             writeEigenstrat genoOut snpOut indOut indEntries
   where
     filterTransitions = if transversionsOnly
-                        then P.filter (\e -> isTransversionSnp (sVCFref e) (sVCFalt e))
+                        then P.filter (\e -> isTransversionSnp (T.singleton $ fsRef e)
+                            [T.singleton $ fsAlt e])
                         else cat
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> T.Text -> FilePath ->
-                                          Maybe B.ByteString -> Producer SimpleVCFentry m r
+                                          Maybe B.ByteString -> Producer FreqSumEntry m r
 runJointly vcfBody nrInds chrom snpPosFile refSeq =
     let snpProd = readEigenstratSnpFile snpPosFile >->
             P.filter (\(EigenstratSnpEntry c _ _ _) -> c == chrom)
@@ -116,7 +117,7 @@ runJointly vcfBody nrInds chrom snpPosFile refSeq =
     cmp (EigenstratSnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
 
 processVcfWithSnpFile :: (MonadIO m) => Int -> Maybe B.ByteString ->
-                         Pipe (Maybe EigenstratSnpEntry, Maybe VCFentry) SimpleVCFentry m r
+                         Pipe (Maybe EigenstratSnpEntry, Maybe VCFentry) FreqSumEntry m r
 processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
     case jointEntry of
         (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
@@ -129,8 +130,7 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
                                                    then replicate nrInds (Just 2)
                                                    else replicate nrInds (Nothing)
                               Nothing -> replicate nrInds Nothing
-            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef)
-                [T.singleton snpAlt] dosages
+            yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt dosages
         (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
             dosages <- case getDosages vcfEntry of
                 Right dos -> return dos
@@ -151,8 +151,7 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
                                      then map flipDosages dosages
                                      else replicate nrInds Nothing
                         _ -> replicate nrInds Nothing
-            yield $ SimpleVCFentry snpChrom snpPos (T.singleton snpRef)
-                [T.singleton snpAlt] normalizedDosages
+            yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt normalizedDosages
         _ -> return ()
   where
     flipDosages dos = case dos of
@@ -161,20 +160,20 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
         Just 2 -> Just 0
         _ -> Nothing
 
-runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer SimpleVCFentry m r
+runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer FreqSumEntry m r
 runSimple vcfBody chrom = for vcfBody $ \e -> do
     when (vcfChrom e /= T.pack chrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome in VCF")
-    case makeSimpleVCFentry e of
+    case vcfToFreqSumEntry e of
         Right e' -> do
-            liftIO $ print e'
+            liftIO . T.putStr . freqSumEntryToText $ e'
             yield e'
         Left err -> (liftIO . throwIO) (AssertionFailed err)
 
-eigenStratPipe :: (MonadIO m) => T.Text -> Pipe SimpleVCFentry (EigenstratSnpEntry, GenoLine) m r
+eigenStratPipe :: (MonadIO m) => T.Text -> Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) m r
 eigenStratPipe outChrom = P.map vcfToEigenstrat
   where
-    vcfToEigenstrat (SimpleVCFentry _ pos ref alt dosages) =
-        let snpEntry = EigenstratSnpEntry outChrom pos (T.head ref) (T.head . head $ alt)
+    vcfToEigenstrat (FreqSumEntry _ pos ref alt dosages) =
+        let snpEntry = EigenstratSnpEntry outChrom pos ref alt
             genoLine = fromList [dosageToCall d | d <- dosages]
         in  (snpEntry, genoLine)
     dosageToCall d = case d of
