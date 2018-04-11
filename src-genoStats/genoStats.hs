@@ -152,8 +152,11 @@ reportStats names = do
 
 printReports :: (MonadIO m) => [Text] -> (Text, StatsReportAllSamples) -> m ()
 printReports names (chrom, reports) =
-    forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) ->
-        liftIO . putStrLn $ format (s%"\t"%s%"\t"%d%"\t"%d%"\t"%d%"\t"%d) chrom n mis ref alt het
+    forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) -> do
+        let total = mis + ref + alt + het
+            misPerc = round $ (fromIntegral mis / fromIntegral total) * 100.0
+        liftIO . putStrLn $ format (s%"\t"%s%"\t"%d%" ("%d%"%)\t"%d%"\t"%d%"\t"%d) chrom n mis 
+            misPerc ref alt het
 
 accumulateAllChromStats :: [Text] -> Fold (Text, StatsReportAllSamples) (Text, StatsReportAllSamples)
 accumulateAllChromStats names = Fold step initial extract
