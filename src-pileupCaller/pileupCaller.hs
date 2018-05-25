@@ -421,7 +421,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         OP.metavar "<FILE>" <> OP.help "specify an Eigenstrat SNP file for \
         \the positions and alleles to call. All \
         \positions in the SNP file will be output, adding missing data where \
-        \necessary. Note that simpleBamCaller automatically checks whether \
+        \necessary. Note that pileupCaller automatically checks whether \
         \alleles in the SNP file are flipped with respect to the human \
         \reference. But it assumes that the strand-orientation is the same.")
     parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <>
