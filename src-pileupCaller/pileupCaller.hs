@@ -163,7 +163,7 @@ callGenotype mode minDepth refA alleles =
                     else return alleles
                 let groupedAlleles = sortOn fst
                         [(length g, head g) | g <- group . sort $ alleles']
-                    majorityCount = fst . head $ groupedAlleles
+                    majorityCount = fst . last $ groupedAlleles
                     majorityAlleles =
                         [a | (n, a) <- groupedAlleles, n == majorityCount]
                 a <- case majorityAlleles of
