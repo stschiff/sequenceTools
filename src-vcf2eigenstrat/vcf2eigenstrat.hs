@@ -38,9 +38,9 @@ readOptions = OP.execParser parserInfo
   where
     parserInfo = OP.info
         (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
-        (OP.progDesc "A program to convert a VCF file (stdin) to Eigenstrat")
-    versionInfoOpt = OP.infoOption ("This is vcf2eigenstrat from sequenceTools \
-        \Version " ++ showVersion version)
+        (OP.progDesc ("A program to convert a VCF file (stdin) to Eigenstrat. Part of \
+            \sequenceTools version " ++ showVersion version))
+    versionInfoOpt = OP.infoOption (showVersion version)
         (OP.long "version" <> OP.help "Print version and exit")
 
 

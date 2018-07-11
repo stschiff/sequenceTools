@@ -54,14 +54,16 @@ data PileupRow = PileupRow T.Text Int Char [Text] deriving (Show)
 type App = ReaderT ProgOpt (SafeT IO)
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall
 
+progInfo :: String
+progInfo = "A program to perform genotype calling from a pileup file. Part of sequenceTools \
+    \version " ++ showVersion version
+
 main :: IO ()
 main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
   where
     parser = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
-                     (OP.progDesc "A program to perform genotype calling from \
-                     \a pileup file")
-    versionInfoOpt = OP.infoOption ("This is pileupCaller from sequenceTools \
-        \Version " ++ showVersion version)
+                     (OP.progDesc progInfo)
+    versionInfoOpt = OP.infoOption (showVersion version)
         (OP.long "version" <> OP.help "Print version and exit")
 
 runWithOpts :: App ()

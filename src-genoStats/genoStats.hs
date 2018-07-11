@@ -19,9 +19,10 @@ import Pipes.Group (groupsBy, folds)
 import Pipes.Safe (MonadSafe, runSafeT)
 import Pipes.Prelude (tee, fold)
 import Prelude hiding (FilePath, putStrLn)
+import qualified Text.PrettyPrint.ANSI.Leijen as PT
 import Turtle hiding (stdin, x, view, cat, fold)
 
-data ProgOpt = ProgOpt InputOption Bool
+data ProgOpt = ProgOpt InputOption
 
 data InputOption = FreqsumInput (Maybe FilePath) | EigenstratInput FilePath FilePath FilePath
 
@@ -40,14 +41,12 @@ data StatsReport = StatsReport {
 main :: IO ()
 main = options descString argParser >>= runWithOpts
   where
-    descString = "A program to evaluate per-chromosome and total statistics of genotyping \
-            \data, read either as Eigenstrat or FreqSum"
+    descString = Description $ PT.text ("genoStats " ++ showVersion version ++ ": A program \
+        \to evaluate per-chromosome and total statistics \
+        \of genotyping data, read either as Eigenstrat or FreqSum")
 
 argParser :: Parser ProgOpt
-argParser = ProgOpt <$> parseInputOpt <*> parseVersionOpt
-  where
-    parseInputOpt = parseFreqsumInput <|> parseEigenstratInput
-    parseVersionOpt = switch "version" 'v' "Print the version and exit"
+argParser = ProgOpt <$> (parseFreqsumInput <|> parseEigenstratInput)
 
 parseFreqsumInput :: Parser InputOption
 parseFreqsumInput =
@@ -66,12 +65,8 @@ parseEigenstratInput = EigenstratInput <$> parseGenoFile <*> parseSnpFile <*> pa
     parseIndFile = optPath "eigenstratInd" 'i' "Eigenstrat Ind File"
 
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt inputOpt optVersion) = do
-    if optVersion
-    then do
-        let v = pack . showVersion $ version
-        echo . repr $ format ("This is genoStats from sequenceTools version "%s) v
-    else runSafeT $ do
+runWithOpts (ProgOpt inputOpt) = do
+    runSafeT $ do
         (names, entryProducer) <- case inputOpt of 
             FreqsumInput fsFile -> runWithFreqSum fsFile
             EigenstratInput genoFile snpFile indFile -> runWithEigenstrat genoFile snpFile indFile
