@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import SeqTools.OrderedZip (orderedZip)
-import SequenceFormats.Utils (liftParsingErrors)
+import SequenceFormats.Utils (liftParsingErrors, Chrom(..))
 import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..), GenoLine, 
     EigenstratIndEntry(..), Sex(..), writeEigenstrat, GenoEntry(..))
 import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
@@ -37,7 +37,7 @@ data ProgOpt = ProgOpt {
     optDownSampling :: Bool,
     optTransitionsOnly :: TransitionsMode,
     optSnpFile :: Maybe FilePath,
-    optOutChrom :: Maybe Text,
+    optOutChrom :: Maybe Chrom,
     optOutFormat :: OutFormat,
     optSampleNames :: Either [Text] FilePath,
     optSamplePopName :: Text,
@@ -50,7 +50,7 @@ data CallingMode = MajorityCalling Bool | RandomCalling | RareCalling Int |
 data TransitionsMode =
     TransitionsMissing | SkipTransitions | AllSites deriving (Show, Read)
 data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
-data PileupRow = PileupRow T.Text Int Char [Text] deriving (Show)
+data PileupRow = PileupRow Chrom Int Char [Text] deriving (Show)
 type App = ReaderT ProgOpt (SafeT IO)
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall
 
@@ -99,7 +99,7 @@ pileupParser = do
     entries <- parsePileupPerSample refA `A.sepBy1`
         A.satisfy A.isHorizontalSpace
     A.endOfLine
-    let ret = PileupRow chrom pos refA entries
+    let ret = PileupRow (Chrom chrom) pos refA entries
     --trace (show ret) $ return ret
     return ret
   where
@@ -252,10 +252,10 @@ snpListCalling snpFileName pileupProducer = do
     minDepth <- asks optMinDepth
     let ret = for jointProd $ \jointEntry ->
             case jointEntry of
-                (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Nothing) ->
+                (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt), Nothing) ->
                     yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt
                             (replicate (length sampleNames) Nothing)
-                (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt),
+                (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt),
                  Just pileupRow) -> do
                     let PileupRow _ _ refA entryPerSample = pileupRow
                     calls <- liftIO $ mapM (callGenotype mode minDepth refA)
@@ -265,20 +265,8 @@ snpListCalling snpFileName pileupProducer = do
                 _ -> return ()
     return (fst <$> ret)
   where
-    cmp (EigenstratSnpEntry snpChrom snpPos _ _) (PileupRow pChrom pPos _ _) =
-        case snpChrom `chromNameCompare` pChrom of
-            LT -> LT
-            GT -> GT
-            EQ -> snpPos `compare` pPos
-    chromNameCompare c1 c2 =
-        let (c1Nums, c1NonNums) = partition isDigit . T.unpack $ c1
-            (c2Nums, c2NonNums) = partition isDigit . T.unpack $ c2
-            c1Num = read c1Nums :: Int
-            c2Num = read c2Nums :: Int
-        in  case c1NonNums `compare` c2NonNums of
-                LT -> LT
-                GT -> GT
-                EQ -> c1Num `compare` c2Num
+    cmp (EigenstratSnpEntry snpChrom snpPos _ _ _ _) (PileupRow pChrom pPos _ _) =
+        (snpChrom, snpPos) `compare` (pChrom, pPos)
 
 outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()
 outputFreqSum freqSumProducer = do
@@ -349,12 +337,14 @@ filterTransitions transversionsMode =
         ((ref == 'G') && (alt == 'A')) || ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
 
-toEigenstrat :: Bool -> Maybe Text -> Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+toEigenstrat :: Bool -> Maybe Chrom ->
+    Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
 toEigenstrat diploidizeCall outChrom = P.map toEigenstrat'
   where
     toEigenstrat' (FreqSumEntry chrom pos ref alt calls) =
         let newChrom = fromMaybe chrom outChrom
-            snpEntry = EigenstratSnpEntry newChrom pos ref alt
+            snpId = format (s%"_"%d) (unChrom newChrom) pos
+            snpEntry = EigenstratSnpEntry newChrom pos 0.0 snpId ref alt
             geno = fromList . map toGenoCall $ calls
         in  (snpEntry, geno)
     toGenoCall c =
@@ -426,7 +416,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         \necessary. Note that pileupCaller automatically checks whether \
         \alleles in the SNP file are flipped with respect to the human \
         \reference. But it assumes that the strand-orientation is the same.")
-    parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <>
+    parseOutChrom = OP.option (Just . Chrom . T.pack <$> OP.str) (OP.long "outChrom" <>
         OP.metavar "<CHROM>" <> OP.help "specify the output chromosome name. \
         \This can be useful if the input chromosome name is something like \
         \'chr1' and you would like to merge with a dataset that has just \

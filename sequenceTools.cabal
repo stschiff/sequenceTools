@@ -1,5 +1,5 @@
 name:                sequenceTools
-version:             1.2.2
+version:             1.2.3
 license:             GPL-3
 license-file:        LICENSE
 author:              Stephan Schiffels
@@ -12,7 +12,7 @@ library
     exposed-modules:    SeqTools.OrderedZip
     hs-source-dirs:     src
     build-depends:      base, pipes, text, transformers, pipes-attoparsec, pipes-text, attoparsec,
-                        errors, bytestring, pipes-bytestring, turtle, lens-family
+                        errors, bytestring, pipes-bytestring, turtle, lens-family, exceptions
     default-language:   Haskell2010
 
 executable vcf2eigenstrat
@@ -39,5 +39,13 @@ executable genoStats
     hs-source-dirs:     src-genoStats
     build-depends:      base, exceptions, sequence-formats, pipes, turtle, text, errors, pipes-text,
                         pipes-safe, foldl, vector, lens-family, pipes-group, ansi-wl-pprint
+    default-language:   Haskell2010
+    other-modules:      Paths_sequenceTools
+
+executable normaliseBimWithVCF
+    main-is:            normaliseBimWithVCF.hs
+    hs-source-dirs:     src-normaliseBimWithVCF
+    build-depends:      base, exceptions, ansi-wl-pprint, system-filepath, turtle, sequence-formats,
+                        pipes, pipes-ordered-zip, pipes-safe, pipes-text
     default-language:   Haskell2010
     other-modules:      Paths_sequenceTools

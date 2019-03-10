@@ -7,6 +7,7 @@ import SequenceFormats.VCF (readVCFfromStdIn, VCFheader(..), VCFentry(..),
 import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat, 
     GenoLine, GenoEntry(..), Sex(..), EigenstratIndEntry(..))
 import SequenceFormats.FreqSum (FreqSumEntry(..), freqSumEntryToText)
+import SequenceFormats.Utils (Chrom(..))
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (when)
@@ -27,8 +28,16 @@ import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
 import qualified Pipes.Safe.Prelude as S
 import System.IO (IOMode(..))
+import Turtle (format, s, d, (%))
 
-data ProgOpt = ProgOpt (Maybe FilePath) (Maybe FilePath) FilePath T.Text (Maybe T.Text) Bool
+data ProgOpt = ProgOpt {
+    optSnpPosFile :: Maybe FilePath,
+    optFillHomRef :: Maybe FilePath,
+    optOutPrefix :: FilePath,
+    optChrom :: Chrom,
+    optOutChrom :: Maybe Chrom,
+    optTransversionsOnly :: Bool
+}
 
 main :: IO ()
 main = readOptions >>= runMain
@@ -57,20 +66,21 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
     parseFillHomRef = OP.option (Just <$> OP.str) (OP.long "fillHomRef" <> OP.value Nothing <>
                              OP.short 'r' <>
                              OP.help "Input a reference sequence (uncompressed fasta format) to \
-                                      \use to declare missing sites in the VCF as Hom-Ref instead of \
+                                      \use to declare missing sites in the VCF as Hom-Ref instead \
+                                      \of \
                                       \missing. This is useful if your VCF only contains non-ref \
                                       \sites. This option only makes sense if you use a SNP file.")
     parseOutPrefix = OP.strOption (OP.long "outPrefix" <> OP.short 'e' <>
                                   OP.metavar "<FILE_PREFIX>" <>
                                   OP.help "specify the filenames for the EigenStrat SNP and IND \
                                   \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt")
-    parseChrom = OP.option (T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
+    parseChrom = OP.option (Chrom . T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
                             OP.metavar "<CHROM>" <> OP.help "specify the chromosome in the VCF \
                             \file to \
                             \call from. This is important if a SNP file has been given.")
-    parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <> OP.value Nothing <>
-                                    OP.metavar "<CHROM>" <>
-                                   OP.help "specify the output chromosome name" <> OP.value Nothing)
+    parseOutChrom = OP.option (Just . Chrom . T.pack <$> OP.str)
+        (OP.long "outChrom" <> OP.value Nothing <> OP.metavar "<CHROM>" <>
+        OP.help "specify the output chromosome name" <> OP.value Nothing)
     parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <>
                              OP.help "Remove transition SNPs from the output")
 
@@ -90,11 +100,11 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
                     refSeq <- case fillHomRef of
                             Just fp -> do
                                 S.withFile fp ReadMode $ \fh -> do
-                                    bs <- liftIO $ loadFastaChrom fh (T.unpack chrom) >>= PB.toLazyM
+                                    bs <- liftIO $ loadFastaChrom fh chrom >>= PB.toLazyM
                                     return $ Just (BL.toStrict bs)
                             Nothing -> return Nothing
                     return $ runJointly vcfBodyBiAllelic nrInds chrom fn refSeq
-                Nothing -> return $ runSimple vcfBodyBiAllelic (T.unpack chrom)
+                Nothing -> return $ runSimple vcfBodyBiAllelic chrom
         let outChrom = case maybeOutChrom of
                 Just c -> c
                 Nothing -> chrom
@@ -106,21 +116,21 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
                             [T.singleton $ fsAlt e])
                         else cat
 
-runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> T.Text -> FilePath ->
+runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> Chrom -> FilePath ->
                                           Maybe B.ByteString -> Producer FreqSumEntry m r
 runJointly vcfBody nrInds chrom snpPosFile refSeq =
     let snpProd = readEigenstratSnpFile snpPosFile >->
-            P.filter (\(EigenstratSnpEntry c _ _ _) -> c == chrom)
+            P.filter (\(EigenstratSnpEntry c _ _ _ _ _) -> c == chrom)
         jointProd = snd <$> orderedZip cmp snpProd vcfBody
     in  jointProd >-> processVcfWithSnpFile nrInds refSeq
   where
-    cmp (EigenstratSnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
+    cmp (EigenstratSnpEntry _ snpPos _ _ _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
 
 processVcfWithSnpFile :: (MonadIO m) => Int -> Maybe B.ByteString ->
                          Pipe (Maybe EigenstratSnpEntry, Maybe VCFentry) FreqSumEntry m r
 processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
     case jointEntry of
-        (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Nothing) -> do
+        (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt), Nothing) -> do
             let dosages = case refSeq of
                               Just seq_ -> let nuc = seq_ `B.index` (fromIntegral snpPos - 1)
                                            in  if nuc == snpRef
@@ -131,7 +141,7 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
                                                    else replicate nrInds (Nothing)
                               Nothing -> replicate nrInds Nothing
             yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt dosages
-        (Just (EigenstratSnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
+        (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt), Just vcfEntry) -> do
             dosages <- case getDosages vcfEntry of
                 Right dos -> return dos
                 Left err -> liftIO . throwIO $ AssertionFailed err
@@ -160,20 +170,21 @@ processVcfWithSnpFile nrInds refSeq = for cat $ \jointEntry -> do
         Just 2 -> Just 0
         _ -> Nothing
 
-runSimple :: (MonadIO m) => Producer VCFentry m r -> String -> Producer FreqSumEntry m r
+runSimple :: (MonadIO m) => Producer VCFentry m r -> Chrom -> Producer FreqSumEntry m r
 runSimple vcfBody chrom = for vcfBody $ \e -> do
-    when (vcfChrom e /= T.pack chrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome in VCF")
+    when (vcfChrom e /= chrom) $ (liftIO . throwIO) (AssertionFailed "wrong chromosome in VCF")
     case vcfToFreqSumEntry e of
         Right e' -> do
             liftIO . T.putStr . freqSumEntryToText $ e'
             yield e'
         Left err -> (liftIO . throwIO) (AssertionFailed err)
 
-eigenStratPipe :: (MonadIO m) => T.Text -> Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) m r
+eigenStratPipe :: (MonadIO m) => Chrom -> Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) m r
 eigenStratPipe outChrom = P.map vcfToEigenstrat
   where
     vcfToEigenstrat (FreqSumEntry _ pos ref alt dosages) =
-        let snpEntry = EigenstratSnpEntry outChrom pos ref alt
+        let snpId = format (s%"_"%d) (unChrom outChrom) pos
+            snpEntry = EigenstratSnpEntry outChrom pos 0.0 snpId ref alt
             genoLine = fromList [dosageToCall d | d <- dosages]
         in  (snpEntry, genoLine)
     dosageToCall d = case d of

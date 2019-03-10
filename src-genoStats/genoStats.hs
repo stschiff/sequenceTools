@@ -4,6 +4,7 @@ import qualified SequenceFormats.Eigenstrat as E
 import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader(..), 
     FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (readEigenstrat)
+import SequenceFormats.Utils (Chrom(..))
 
 import Control.Foldl (purely, Fold)
 import Control.Monad (forM_)
@@ -26,7 +27,7 @@ data ProgOpt = ProgOpt InputOption
 
 data InputOption = FreqsumInput (Maybe FilePath) | EigenstratInput FilePath FilePath FilePath
 
-data InputEntry = InputEntry Text (V.Vector Genotype) deriving (Show)
+data InputEntry = InputEntry Chrom (V.Vector Genotype) deriving (Show)
 data Genotype = HomRef | HomAlt | Het | Missing deriving (Show)
 
 type StatsReportAllSamples = [StatsReport]
@@ -101,7 +102,7 @@ runWithEigenstrat genoFile snpFile indFile = do
         indFile' = unpack $ format fp indFile
     (indEntries, genoStream) <- readEigenstrat genoFile' snpFile' indFile'
     let names = [name | E.EigenstratIndEntry name _ _ <- indEntries]
-    let prod = for genoStream $ \(E.EigenstratSnpEntry chrom _ _ _, genoLine) -> do
+    let prod = for genoStream $ \(E.EigenstratSnpEntry chrom _ _ _ _ _, genoLine) -> do
             let genotypes = V.fromList $ do
                     geno <- toList genoLine
                     case geno of
@@ -113,18 +114,18 @@ runWithEigenstrat genoFile snpFile indFile = do
     return (names, prod)
 
 runStats :: (MonadIO m) => [Text] -> Producer InputEntry m () ->
-    Producer (Text, StatsReportAllSamples) m ()
+    Producer (Chrom, StatsReportAllSamples) m ()
 runStats names entryProducer =
     let groupedProd = view (groupsBy (\(InputEntry c1 _) (InputEntry c2 _) -> c1 == c2))        
             entryProducer
     in  purely folds (runStatsPerChrom (length names)) groupedProd
 
-runStatsPerChrom :: Int -> Fold InputEntry (Text, StatsReportAllSamples)
+runStatsPerChrom :: Int -> Fold InputEntry (Chrom, StatsReportAllSamples)
 runStatsPerChrom nrSamples = (,) <$> getChrom <*>
     traverse runStatsPerChromPerSample [0..(nrSamples - 1)]    
     
-getChrom :: Fold InputEntry Text
-getChrom = Fold (\_ (InputEntry c _) -> c) "" id
+getChrom :: Fold InputEntry Chrom
+getChrom = Fold (\_ (InputEntry c _) -> c) (Chrom "") id
 
 runStatsPerChromPerSample :: Int -> Fold InputEntry StatsReport
 runStatsPerChromPerSample i = Fold step initial extract
@@ -140,30 +141,31 @@ runStatsPerChromPerSample i = Fold step initial extract
     extract :: StatsReport -> StatsReport
     extract = id
     
-reportStats :: (MonadIO m) => [Text] -> Consumer (Text, StatsReportAllSamples) m ()
+reportStats :: (MonadIO m) => [Text] -> Consumer (Chrom, StatsReportAllSamples) m ()
 reportStats names = do
     liftIO . putStrLn $ format ("Chrom\tSample\tMissing\tHomRef\tHomAlt\tHet")
     for cat $ \(chrom, reports) -> printReports names (chrom, reports)
 
-printReports :: (MonadIO m) => [Text] -> (Text, StatsReportAllSamples) -> m ()
+printReports :: (MonadIO m) => [Text] -> (Chrom, StatsReportAllSamples) -> m ()
 printReports names (chrom, reports) =
     forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) -> do
         let total = mis + ref + alt + het
             misPerc = round $ (fromIntegral mis / fromIntegral total) * 100.0
-        liftIO . putStrLn $ format (s%"\t"%s%"\t"%d%" ("%d%"%)\t"%d%"\t"%d%"\t"%d) chrom n mis 
-            misPerc ref alt het
+        liftIO . putStrLn $ format (s%"\t"%s%"\t"%d%" ("%d%"%)\t"%d%"\t"%d%"\t"%d) (unChrom chrom) 
+            n mis misPerc ref alt het
 
-accumulateAllChromStats :: [Text] -> Fold (Text, StatsReportAllSamples) (Text, StatsReportAllSamples)
+accumulateAllChromStats :: [Text] ->
+    Fold (Chrom, StatsReportAllSamples) (Chrom, StatsReportAllSamples)
 accumulateAllChromStats names = Fold step initial extract
   where
-    step :: StatsReportAllSamples -> (Text, StatsReportAllSamples) -> StatsReportAllSamples
+    step :: StatsReportAllSamples -> (Chrom, StatsReportAllSamples) -> StatsReportAllSamples
     step sumReports (_, newReports) = do
         (StatsReport smiss shomr shoma shet, StatsReport miss homr homa het) <-
                 zip sumReports newReports
         return $ StatsReport (smiss + miss) (shomr + homr) (shoma + homa) (shet + het)
     initial :: StatsReportAllSamples
     initial = [StatsReport 0 0 0 0 | _ <- names]
-    extract :: StatsReportAllSamples -> (Text, StatsReportAllSamples)
-    extract r = ("Total", r)
+    extract :: StatsReportAllSamples -> (Chrom, StatsReportAllSamples)
+    extract r = (Chrom "Total", r)
 
         

@@ -1,9 +1,6 @@
-flags: {}
-packages:
-- location: .
-- location:
-    git: https://github.com/stschiff/sequence-formats.git
-    commit: b781460be6127923b996b9e2295a061f5948e4ba
-  extra-dep: true
-extra-deps: []
+extra-deps:
+# - git: https://github.com/stschiff/sequence-formats.git
+#   commit: b781460be6127923b996b9e2295a061f5948e4ba
+- /Users/schiffels/repos/github/stschiff/pipes-ordered-zip
+- /Users/schiffels/repos/github/stschiff/sequence-formats
 resolver: lts-10.5
