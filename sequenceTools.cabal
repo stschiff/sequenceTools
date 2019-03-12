@@ -1,5 +1,5 @@
 name:                sequenceTools
-version:             1.2.3
+version:             1.2.4
 license:             GPL-3
 license-file:        LICENSE
 author:              Stephan Schiffels
@@ -46,6 +46,6 @@ executable normaliseBimWithVCF
     main-is:            normaliseBimWithVCF.hs
     hs-source-dirs:     src-normaliseBimWithVCF
     build-depends:      base, exceptions, ansi-wl-pprint, system-filepath, turtle, sequence-formats,
-                        pipes, pipes-ordered-zip, pipes-safe, pipes-text
+                        pipes, pipes-ordered-zip, pipes-safe, pipes-text, text
     default-language:   Haskell2010
     other-modules:      Paths_sequenceTools
