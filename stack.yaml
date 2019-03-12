@@ -2,12 +2,9 @@ extra-deps:
 # - git: https://github.com/stschiff/sequence-formats.git
 #   commit: b781460be6127923b996b9e2295a061f5948e4ba
 # - /Users/schiffels/repos/github/stschiff/pipes-ordered-zip
-- location:
-    git: https://github.com/stschiff/pipes-ordered-zip
-    commit: 672e555fe3dbeb5936cf650ffaaddf6f15243b4f
-
+- git: git@github.com:stschiff/pipes-ordered-zip.git
+  commit: 672e555fe3dbeb5936cf650ffaaddf6f15243b4f
 # - /Users/schiffels/repos/github/stschiff/sequence-formats
-- location:
-    git: https://github.com/stschiff/sequence-formats
-    commit: ea9316cecd8b5b708e70fc99b0893d8c5487142e
+- git: git@github.com:stschiff/sequence-formats.git
+  commit: ea9316cecd8b5b708e70fc99b0893d8c5487142e
 resolver: lts-10.5
