@@ -1,11 +1,16 @@
 module SequenceTools.PileupCallerSpec (spec) where
 
+import SequenceFormats.FreqSum (FreqSumEntry(..))
+import SequenceFormats.Eigenstrat (GenoEntry(..), EigenstratSnpEntry(..))
+import SequenceFormats.Utils (Chrom(..))
 import SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, CallingMode(..))
+    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..))
 
 import Control.Monad (replicateM, forM_)
+import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
+import Data.Vector (fromList)
 import Test.Hspec
 
 spec :: Spec
@@ -16,6 +21,8 @@ spec = do
     testCallMajorityAllele
     testFindMajorityAlleles
     testCallGenotypeFromPileup
+    testCallToEigenstratGeno
+    testFreqSumToEigenstrat
 
 testCallToDosage :: Spec
 testCallToDosage = describe "callToDosage" $ do
@@ -91,8 +98,34 @@ testCallRandomDiploid = describe "callRandomDiploid" $ do
     it "should return AC for AC" $ do
         DiploidCall a1 a2 <- callRandomDiploid "AC"
         sort [a1, a2] `shouldBe` "AC"
-    it "should return 25% hom each, and 50% het for AACC" $ do
+    it "should return 50% het for AACC" $ do
         r <- replicateM 1000 (callRandomDiploid "AACC")
-        let n = length [1 | DiploidCall a1 a2 <- r, a1 /= a2]
+        let n = length ['A' | DiploidCall a1 a2 <- r, a1 /= a2]
         n `shouldSatisfy` (\nn -> nn >= 588 && nn < 743) --p < 1e-7
+
+testCallToEigenstratGeno :: Spec
+testCallToEigenstratGeno = describe "callToEigenstratGeno" $ do
+    it "should give Hom-Ref for 0 pseudo-haploid" $
+        callToEigenstratGeno True (Just 0) `shouldBe` HomRef
+    it "should give Hom-Alt for 1 pseudo-haploid" $
+        callToEigenstratGeno True (Just 1) `shouldBe` HomAlt
+    it "should give Missing for Nothing pseudo-haploid" $
+        callToEigenstratGeno True Nothing `shouldBe` Missing
+    it "should give Hom-Ref for 0 diploid" $
+        callToEigenstratGeno False (Just 0) `shouldBe` HomRef
+    it "should give Het for 1 diploid" $
+        callToEigenstratGeno False (Just 1) `shouldBe` Het
+    it "should give Hom-Alt for 2 diploid" $
+        callToEigenstratGeno False (Just 2) `shouldBe` HomAlt
+    it "should give Missing for Nothing diploid" $
+        callToEigenstratGeno False Nothing `shouldBe` Missing
+
+testFreqSumToEigenstrat :: Spec
+testFreqSumToEigenstrat = describe "freqSumtoEigenstrat" $ do
+    let fs = FreqSumEntry (Chrom "1") 1000 'A' 'C' [Just 0, Just 1, Just 1, Nothing, Just 0]
+    let es = EigenstratSnpEntry (Chrom "1") 1000 0.0 (B.pack "1_1000") 'A' 'C'
+        genoLine = fromList [HomRef, HomAlt, HomAlt, Missing, HomRef]
+    it "should convert a freqSum example correctly to eigenstrat" $
+        freqSumToEigenstrat True fs `shouldBe` (es, genoLine)
+    
 

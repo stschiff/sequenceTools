@@ -1,9 +1,16 @@
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, CallingMode(..)) where
+    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..)) where
 
-import Data.List (sortOn, group, sort)
+import SequenceFormats.Utils (Chrom(..))
+import SequenceFormats.FreqSum (FreqSumEntry(..))
+import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), GenoEntry(..), GenoLine)
 import SequenceTools.Utils (sampleWithoutReplacement)
+
+import qualified Data.ByteString.Char8 as B
+import Data.List (sortOn, group, sort)
+import Data.Vector (fromList)
+
 -- |A datatype to represent a single genotype call
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall deriving (Show, Eq)
 
@@ -75,3 +82,28 @@ callRandomDiploid alleles = do
         Nothing -> return MissingCall
         Just [a1, a2] -> return $ DiploidCall a1 a2
         _ -> error "should not happen"
+
+-- |convert a freqSum entry to an eigenstrat SNP entry
+freqSumToEigenstrat :: Bool -> FreqSumEntry -> (EigenstratSnpEntry, GenoLine)
+freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos ref alt calls) =
+    let snpId_ = B.pack $ c <> "_" <> show pos
+        snpEntry = EigenstratSnpEntry chrom pos 0.0 snpId_ ref alt
+        geno = fromList . map (callToEigenstratGeno diploidizeCall) $ calls
+    in  (snpEntry, geno)
+
+-- |convert a Call to an eigenstrat-encoded genotype
+callToEigenstratGeno :: Bool -> Maybe Int -> GenoEntry
+callToEigenstratGeno diploidizeCall c =
+    if diploidizeCall then
+        case c of
+            Just 0 -> HomRef
+            Just 1 -> HomAlt
+            Nothing -> Missing
+            _ -> error "illegal call for pseudo-haploid Calling method"
+    else
+        case c of
+            Just 0 -> HomRef
+            Just 1 -> Het
+            Just 2 -> HomAlt
+            Nothing -> Missing
+            _ -> error ("unknown genotype " ++ show c)
