@@ -1,42 +1,44 @@
-#!/usr/bin/env stack
--- stack runghc
-
 {-# LANGUAGE OverloadedStrings #-}
 
+import SequenceTools.Utils (versionInfoOpt, versionInfoText)
+
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import qualified Data.ByteString.Char8 as B
 import Data.Maybe (isJust, fromJust)
-import Data.Ord (Ordering(..))
-import qualified Data.Text as T
-import Data.Version (showVersion)
-import Filesystem.Path.CurrentOS (encodeString)
-import Turtle hiding (stdout, cat)
 import SequenceFormats.VCF (readVCFfromFile, VCFentry(..), isBiallelicSnp)
 import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readBimFile, writeEigenstratSnp)
 import SequenceFormats.Utils (Chrom(..))
-import Paths_sequenceTools (version)
-import Pipes (runEffect, (>->), await, Consumer, Producer, Pipe, for, cat, yield)
+import qualified Options.Applicative as OP
+import Pipes (runEffect, (>->), Pipe, for, cat, yield)
 import qualified Pipes.Prelude as P
 import Pipes.OrderedZip (orderedZip)
-import Pipes.Safe (runSafeT, MonadSafe)
-import Pipes.Safe.Prelude (withFile)
-import Pipes.Text.Encoding (decodeAscii)
-import Prelude hiding (FilePath, withFile, hGetContents)
-import System.IO (IOMode(..), stdout, stderr)
-import qualified Text.PrettyPrint.ANSI.Leijen as PT
+import Pipes.Safe (runSafeT)
+import System.IO (stdout, stderr, hPutStrLn)
 
-optParser :: Parser (FilePath, FilePath)
-optParser = (,) <$> argPath "BIM-file" "BIM-file" <*> argPath "VCF-file" "VCF-file"
+type ProgOpt = (FilePath, FilePath)
 
-main = do
-    (bimFileName, vcfFileName) <- options helpMessage optParser
+main :: IO ()
+main = OP.execParser optionSpec >>= runWithOptions
+
+optionSpec :: OP.ParserInfo ProgOpt
+optionSpec = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> optParser) (
+    OP.fullDesc <>
+    OP.progDesc ("Program to flip all alleles in a BIM file with a refrence VCF file \
+        \into the correct REF and ALT order and the reference strand" <> versionInfoText)) 
+
+optParser :: OP.Parser ProgOpt
+optParser = (,) <$> OP.strOption (OP.long "BIM-file" <> OP.metavar "FILE") <*> OP.strOption (OP.long "VCF-file" <> OP.metavar "FILE")
+
+runWithOptions :: ProgOpt -> IO ()
+runWithOptions (bimFileName, vcfFileName) = do
     runSafeT $ do
-        (vcfHeader, vcfProd) <- readVCFfromFile (encodeString vcfFileName)
+        (_, vcfProd) <- readVCFfromFile vcfFileName
         let vcfProdFiltered = vcfProd >-> P.filter isValidSnp
-            bimProd = readBimFile (encodeString bimFileName)
-            mergedProd = orderedZip comp bimProd vcfProd >> return ()
+            bimProd = readBimFile bimFileName
+            mergedProd = orderedZip comp bimProd vcfProdFiltered >> return ()
         _ <- runEffect $ mergedProd >-> processJointEntries >-> writeEigenstratSnp stdout
         return ()
   where
-    helpMessage = Description $ PT.text ("program to normalise a BIM file with respect to a VCF file. Part of sequenceTools version " ++ showVersion version)
     comp (EigenstratSnpEntry bimChrom bimPos _ _ _ _) vcfEntry = 
         compare (bimChrom, bimPos) (vcfChrom vcfEntry, vcfPos vcfEntry)
     isValidSnp vcf = isBiallelicSnp (vcfRef vcf) (vcfAlt vcf)
@@ -47,21 +49,15 @@ processJointEntries = for cat (\(mes,mvcf) -> do
     case (mes, mvcf) of
         (Just es, Just vcf) ->
             if isJust (vcfId vcf) && fromJust (vcfId vcf) /= snpId es
-            then liftIO . err . unsafeTextToLine $
-                format ("SKIP_ID_MISMATCH: "%s%" <> "%s) (snpId es) (fromJust $ vcfId vcf)
+            then
+                liftIO $ hPutStrLn stderr ("SKIP_ID_MISMATCH: " <> B.unpack (snpId es) <> " <> " <> B.unpack (fromJust (vcfId vcf)))
             else do
-                if snpRef es == T.head (vcfRef vcf) && snpAlt es == T.head (head (vcfAlt vcf))
+                if snpRef es == B.head (vcfRef vcf) && snpAlt es == B.head (head (vcfAlt vcf))
                 then yield es
                 else do
-                    liftIO . err . unsafeTextToLine $
-                        format ("WARN_ALLELE_CHANGE at "%s%" ("%s%":"%d%
-                            "): ("%s%","%s%") -> ("%s%","%s%")") (snpId es) 
-                            (unChrom $ snpChrom es) (snpPos es) (T.singleton $ snpRef es) 
-                            (T.singleton $ snpAlt es) (vcfRef vcf)
-                            (head $ vcfAlt vcf)
-                    yield es {snpRef = T.head (vcfRef vcf), snpAlt = T.head (head (vcfAlt vcf))}
+                    liftIO $ hPutStrLn stderr ("WARN_ALLELE_CHANGE at " <> B.unpack (snpId es) <> " (" <> unChrom (snpChrom es) <> ":" <> show (snpPos es) <>
+                            "): (" <> [snpRef es] <> "," <> [snpAlt es] <> ") -> (" <> B.unpack (vcfRef vcf) <> "," <> (B.unpack . head) (vcfAlt vcf) <> ")") 
+                    yield es {snpRef = B.head (vcfRef vcf), snpAlt = B.head (head (vcfAlt vcf))}
         (Just es, Nothing) ->
-            liftIO . err . unsafeTextToLine $
-                format ("SKIP_MISSING: Did not find position "%s%" ("%s%":"%d%
-                    ") in VCF file") (snpId es) (unChrom $ snpChrom es) (snpPos es)
+            liftIO $ hPutStrLn stderr ("SKIP_MISSING: Did not find position " <> B.unpack (snpId es) <> " (" <> unChrom (snpChrom es) <> ":" <> show (snpPos es) <> ") in VCF file")
         _ -> return ())

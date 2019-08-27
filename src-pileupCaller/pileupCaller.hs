@@ -1,20 +1,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import SeqTools.OrderedZip (orderedZip)
+import Pipes.OrderedZip (orderedZip)
 import SequenceFormats.Utils (liftParsingErrors, Chrom(..))
 import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..), GenoLine, 
     EigenstratIndEntry(..), Sex(..), writeEigenstrat, GenoEntry(..))
 import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
+import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
+
+import SequenceTools.Utils (sampleWithoutReplacement)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
-import qualified Data.Attoparsec.Text as A
+import qualified Data.Attoparsec.ByteString.Char8 as A
+import qualified Data.ByteString.Char8 as B
 import Data.Char (isSpace, isDigit, toUpper)
 import Data.List (partition, sortOn, group, sort)
 import Data.Maybe (fromMaybe, catMaybes)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import Data.Version (showVersion)
 import Data.Vector (fromList)
 -- import Debug.Trace (trace)
@@ -22,58 +25,42 @@ import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import Pipes.Attoparsec (parsed)
+import qualified Pipes.ByteString as PB
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
-import qualified Pipes.Text.IO as PT
-import Prelude hiding (FilePath)
 import System.Random (randomRIO, mkStdGen, setStdGen)
-import Turtle hiding (tab, cat, stderr, err, sort, sortOn, x, g)
 
 data ProgOpt = ProgOpt {
-    optCallingModeString :: String,
+    optCallingMode :: CallingMode,
     optSeed :: Maybe Int,
     optMinDepth :: Int,
-    optMinSupport :: Int,
-    optDownSampling :: Bool,
-    optTransitionsOnly :: TransitionsMode,
+    optTransitionsMode :: TransitionsMode,
     optSnpFile :: Maybe FilePath,
-    optOutChrom :: Maybe Chrom,
     optOutFormat :: OutFormat,
-    optSampleNames :: Either [Text] FilePath,
-    optSamplePopName :: Text,
-    optEigenstratOutPrefix :: Maybe FilePath
+    optSampleNames :: Either [String] FilePath,
+    optSamplePopName :: String
 }
 
-data CallingMode = MajorityCalling Bool | RandomCalling | RareCalling Int |
-        RandomDiploidCalling
-    deriving (Show, Read)
-data TransitionsMode =
-    TransitionsMissing | SkipTransitions | AllSites deriving (Show, Read)
-data OutFormat = EigenStrat | FreqSumFormat deriving (Show, Read)
-data PileupRow = PileupRow Chrom Int Char [Text] deriving (Show)
+data TransitionsMode = TransitionsMissing | SkipTransitions | AllSites
+data OutFormat = EigenStratFormat String | FreqSumFormat
 type App = ReaderT ProgOpt (SafeT IO)
-data Call = HaploidCall Char | DiploidCall Char Char | MissingCall
+
+main :: IO ()
+main = OP.execParser parserInfo >>= runSafeT . runReaderT runWithOpts
+  where
+    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser) (OP.progDesc progInfo)
+    versionInfoOpt = OP.infoOption (showVersion version) (OP.long "version" <> OP.help "Print version and exit")
 
 progInfo :: String
 progInfo = "A program to perform genotype calling from a pileup file. Part of sequenceTools \
     \version " ++ showVersion version
 
-main :: IO ()
-main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
-  where
-    parser = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
-                     (OP.progDesc progInfo)
-    versionInfoOpt = OP.infoOption (showVersion version)
-        (OP.long "version" <> OP.help "Print version and exit")
-
 runWithOpts :: App ()
 runWithOpts = do
     setRandomSeed
-    let pileupProducer = parsed pileupParser PT.stdin >>= liftParsingErrors
+    let pileupProducer = readPileupFromStdIn
     snpFile <- asks optSnpFile
-    freqSumProducer <- case snpFile of
-            Nothing -> simpleCalling pileupProducer
-            Just fn -> snpListCalling fn pileupProducer
+    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
     outFormat <- asks optOutFormat
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
@@ -86,71 +73,32 @@ setRandomSeed = do
         Nothing -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
 
-pileupParser :: A.Parser PileupRow
-pileupParser = do
-    chrom <- word
-    _ <- A.space
-    pos <- A.decimal
-    _ <- A.space
-    refA <- A.satisfy (A.inClass "ACTGNactgnM")
-     -- for some reason, there is an M in the human reference at
-     -- position 3:60830534 (both in hs37d5 and in hg19)
-    _ <- A.space
-    entries <- parsePileupPerSample refA `A.sepBy1`
-        A.satisfy A.isHorizontalSpace
-    A.endOfLine
-    let ret = PileupRow (Chrom chrom) pos refA entries
-    --trace (show ret) $ return ret
-    return ret
-  where
-    parsePileupPerSample refA =
-        processPileupEntry refA <$> A.decimal <* A.space <*> word <*
-            A.space <*> word
-
-processPileupEntry :: Char -> Int -> Text -> Text -> Text
-processPileupEntry refA cov readBaseString _ =
-    if cov == 0 then "" else T.pack $ go (T.unpack readBaseString)
-  where
-    go (x:xs)
-        | x `elem` (".," :: String) = refA : go xs
-        | x `elem` ("ACTGNactgn" :: String) = toUpper x : go xs
-        | x `elem` ("$*" :: String) = go xs
-        | x == '^' = go (drop 1 xs)
-        | x `elem` ("+-" :: String) =
-            let [(num, rest)] = reads xs in go (drop num rest)
-        | otherwise = error $ "cannot parse read base string: " ++ (x:xs)
-    go [] = []
-
-word :: A.Parser T.Text
-word = A.takeTill isSpace
-
-simpleCalling :: Producer PileupRow (SafeT IO) () ->
-    App (Producer FreqSumEntry (SafeT IO) ())
-simpleCalling pileupProducer = do
-    mode <- getCallingMode
+pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
+pileupToFreqSum snpFileName pileupProducer = do
+    sampleNameSpec <- asks optSampleNames
+    sampleNames <- case sampleNameSpec of
+        Left list -> return list
+        Right fn -> lines <$> readFile fn
+    let snpProd = readEigenstratSnpFile snpFileName
+        jointProd = orderedZip cmp snpProd pileupProducer
+    mode <- optCallingMode
     minDepth <- asks optMinDepth
-    return $ for pileupProducer $ \pileupRow -> do
-        let PileupRow chrom pos refA entryPerSample = pileupRow
-        calls <- liftIO $ mapM (callGenotype mode minDepth refA)
-            [T.unpack alleles | alleles <- entryPerSample]
-        let altAlleles = findAlternativeAlleles refA calls
-        when (length altAlleles == 1) $ do
-            let altA = head altAlleles
-                genotypes = map (callToGenotype refA altA) calls
-            when (refA /= 'N' && (sum . catMaybes) genotypes > 0) $
-                yield (FreqSumEntry chrom pos refA altA genotypes)
-
-getCallingMode :: App CallingMode
-getCallingMode = do
-    callingModeString <- asks optCallingModeString
-    downSampling <- asks optDownSampling
-    minSupport <- asks optMinSupport
-    case callingModeString of
-        "MajorityCalling" -> return $ MajorityCalling downSampling
-        "RandomCalling" -> return RandomCalling
-        "RareCalling" -> return $ RareCalling minSupport
-        "RandomDiploidCalling" -> return RandomDiploidCalling
-        _ -> error ("illegal calling mode " ++ callingModeString)
+    let ret = for jointProd $ \jointEntry ->
+            case jointEntry of
+                (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt), Nothing) ->
+                    yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt
+                            (replicate (length sampleNames) Nothing)
+                (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt),
+                 Just pileupRow) -> do
+                    let PileupRow _ _ refA entryPerSample = pileupRow
+                    calls <- liftIO $ mapM (callGenotype mode minDepth refA) (map B.unpack entryPerSample)
+                    let genotypes = map (callToGenotype snpRef snpAlt) calls
+                    yield (FreqSumEntry snpChrom snpPos snpRef snpAlt genotypes)
+                _ -> return ()
+    return (fst <$> ret)
+  where
+    cmp (EigenstratSnpEntry snpChrom snpPos _ _ _ _) (PileupRow pChrom pPos _ _) =
+        (snpChrom, snpPos) `compare` (pChrom, pPos)
 
 callGenotype :: CallingMode -> Int -> Char -> String -> IO Call
 callGenotype mode minDepth refA alleles =
@@ -180,15 +128,6 @@ callGenotype mode minDepth refA alleles =
                     Nothing -> return MissingCall
                     Just [a] -> return $ HaploidCall a
                     _ -> error "should not happen"
-            RareCalling minSupport -> do
-                let groupedNonRefAlleles =
-                        [(length g, head g) |
-                         g <- group . sort . filter (/=refA) $ alleles,
-                         length g >= minSupport]
-                case groupedNonRefAlleles of
-                    [] -> return $ DiploidCall refA refA
-                    [(_, a)] -> return $ DiploidCall refA a
-                    _ -> return MissingCall
             RandomDiploidCalling -> do
                 res <- sampleWithoutReplacement alleles 2
                 case res of
@@ -196,77 +135,6 @@ callGenotype mode minDepth refA alleles =
                     Just [a1, a2] -> return $ DiploidCall a1 a2
                     _ -> error "should not happen"
 
-sampleWithoutReplacement :: [a] -> Int -> IO (Maybe [a])
-sampleWithoutReplacement = go []
-  where
-    go res _ 0 = return $ Just res
-    go res xs n
-        | n > length xs = return Nothing
-        | n == length xs = return $ Just (xs ++ res)
-        | otherwise = do
-                rn <- randomRIO (0, length xs - 1)
-                let a = xs !! rn
-                    xs' = remove rn xs
-                go (a:res) xs' (n - 1)
-    remove i xs = let (ys, zs) = splitAt i xs in ys ++ tail zs
-
-callToGenotype :: Char -> Char -> Call -> Maybe Int
-callToGenotype refA altA call = case call of
-    HaploidCall a | a == refA -> Just 0
-                  | a == altA -> Just 1
-                  | otherwise -> Nothing
-    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> Just 0
-                      | (a1, a2) == (refA, altA) -> Just 1
-                      | (a1, a2) == (altA, refA) -> Just 1
-                      | (a1, a2) == (altA, altA) -> Just 2
-                      | otherwise                -> Nothing
-    MissingCall -> Nothing
-
-findAlternativeAlleles :: Char -> [Call] -> String
-findAlternativeAlleles refA calls =
-    let allAlleles = do
-            c <- calls
-            case c of
-                HaploidCall a -> [a]
-                DiploidCall a b -> [a, b]
-                MissingCall -> []
-        groupedNonRefAlleles = sortOn fst
-            [(length g, head g) |
-             g <- group . sort . filter (/=refA) $ allAlleles]
-    in  if null groupedNonRefAlleles
-        then []
-        else
-            let majorityCount = fst. head $ groupedNonRefAlleles
-            in  [a | (n, a) <- groupedNonRefAlleles, n == majorityCount]
-
-snpListCalling :: FilePath -> Producer PileupRow (SafeT IO) () ->
-    App (Producer FreqSumEntry (SafeT IO) ())
-snpListCalling snpFileName pileupProducer = do
-    sampleNameSpec <- asks optSampleNames
-    sampleNames <- case sampleNameSpec of
-        Left list -> return list
-        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
-    let snpProd = readEigenstratSnpFile (T.unpack . format fp $ snpFileName)
-        jointProd = orderedZip cmp snpProd pileupProducer
-    mode <- getCallingMode
-    minDepth <- asks optMinDepth
-    let ret = for jointProd $ \jointEntry ->
-            case jointEntry of
-                (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt), Nothing) ->
-                    yield $ FreqSumEntry snpChrom snpPos snpRef snpAlt
-                            (replicate (length sampleNames) Nothing)
-                (Just (EigenstratSnpEntry snpChrom snpPos _ _ snpRef snpAlt),
-                 Just pileupRow) -> do
-                    let PileupRow _ _ refA entryPerSample = pileupRow
-                    calls <- liftIO $ mapM (callGenotype mode minDepth refA)
-                        [T.unpack alleles | alleles <- entryPerSample]
-                    let genotypes = map (callToGenotype snpRef snpAlt) calls
-                    yield (FreqSumEntry snpChrom snpPos snpRef snpAlt genotypes)
-                _ -> return ()
-    return (fst <$> ret)
-  where
-    cmp (EigenstratSnpEntry snpChrom snpPos _ _ _ _) (PileupRow pChrom pPos _ _) =
-        (snpChrom, snpPos) `compare` (pChrom, pPos)
 
 outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()
 outputFreqSum freqSumProducer = do
@@ -276,11 +144,10 @@ outputFreqSum freqSumProducer = do
     callingMode <- getCallingMode
     sampleNames <- case sampleNameSpec of
         Left list -> return list
-        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
+        Right fn -> liftIO $ lines (readFile fn)
     let nrHaplotypes = case callingMode of
             MajorityCalling _ -> 1 :: Int
             RandomCalling -> 1
-            RareCalling _ -> 2
             RandomDiploidCalling -> 2
     let header' = FreqSumHeader sampleNames [nrHaplotypes | _ <- sampleNames]
         outProd = freqSumProducer >-> filterTransitions transitionsOnly >->
@@ -302,18 +169,17 @@ outputEigenStrat freqSumProducer = do
             RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
-            RareCalling _ -> False
     sampleNames <- case sampleNameSpec of
         Left list -> return list
-        Right fn -> T.lines <$> (liftIO . T.readFile . T.unpack . format fp) fn
+        Right fn -> lines <$> (liftIO . readFile) fn
     eigenStratOutPrefix <- asks optEigenstratOutPrefix
     case eigenStratOutPrefix of
         Nothing -> liftIO . throwIO $
             AssertionFailed "need an eigenstratPrefix for EigenStratFormat"
         Just fn -> do
-            let snpOut = T.unpack . format fp $ fn <.> "snp.txt"
-                indOut = T.unpack . format fp $ fn <.> "ind.txt"
-                genoOut = T.unpack . format fp $ fn <.> "geno.txt"
+            let snpOut = fn <> "snp.txt"
+                indOut = fn <> "ind.txt"
+                genoOut = fn <> "geno.txt"
             p <- asks optSamplePopName
             let indEntries = [EigenstratIndEntry n Unknown p | n <- sampleNames]
             lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
@@ -362,27 +228,42 @@ toEigenstrat diploidizeCall outChrom = P.map toEigenstrat'
                 Nothing -> Missing
                 _ -> error ("unknown genotype " ++ show c)
 
+
+-- ProgOpt {
+--     optCallingMode :: CallingMode,
+--     optSeed :: Maybe Int,
+--     optMinDepth :: Int,
+--     optTransitionsMode :: TransitionsMode,
+--     optSnpFile :: Maybe FilePath,
+--     optOutFormat :: OutFormat,
+--     optSampleNames :: Either [String] FilePath,
+--     optSamplePopName :: String
+-- }
+
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
-    parseMinSupport <*> parseDownSampling <*> parseTransitionsMode <*> 
-    parseSnpFile <*> parseOutChrom <*> parseFormat <*> parseSampleNames <*> 
-    parseSamplePopName <*> parseEigenstratOutPrefix
+    parseTransitionsMode <*> parseSnpFile <*> parseFormat <*> parseSampleNames <*> 
+    parseSamplePopName
   where
-    parseCallingMode = OP.strOption (OP.long "mode" <> OP.short 'm' <>
-        OP.value "RandomCalling" <> OP.showDefault <> OP.metavar "<MODE>" <>
-        OP.help "specify the mode of calling. \
-        \MajorityCalling: Pick the allele supported by the \
-        \most reads. If an equal numbers of Alleles fulfil this, pick one at \
-        \random. This results in a haploid call.\
-        \RandomCalling: Pick one read at random. This results in a haploid \
-        \call;\
-        \RareCalling (deprecated!): If at least n reads support the \
-        \non-reference allele, call a heterozygote,  \
-        \otherwise call homozygous reference, where n is set by --minSupport;\
-        \RandomDiploid: Sample two random reads at random and represent the \
+    parseCallingMode = parseRandomCalling <|> parseMajorityCalling <|> parseRandomDiploidCalling
+    parseRandomCalling = OP.flag' RandomCalling (OP.long "randomHaploid" <>
+        OP.help "This method samples one read at random at each site, and uses the allele \
+        \on that read as the one for the actual genotype. This results in a haploid \
+        \call")
+    parseRandomDiploidCalling = OP.flag' RandomDiploiCalling (OP.long "randomDiploid" <>
+        OP.help "Sample two random reads at random and represent the \
         \individual by the diploid genotype constructed from those two random \
         \picks. This will always assign missing data to positions where only \
-        \one read is present, even if minDepth=1.\n")
+        \one read is present, even if minDepth=1.")
+    parseMajorityCalling = MajorityCalling <$> (parseMajorityCallingFlag *> parseDownsamplingFlag)
+    parseMajorityCallingFlag = OP.flag' True (OP.long "majorityCall" <> OP.help
+        "Pick the allele supported by the \
+        \most reads at a site. If an equal numbers of Alleles fulfil this, pick one at \
+        \random. This results in a haploid call.")
+    parseDownsamplingFlag = OP.switch (OP.long "downSampling" <> OP.help "When this switch is given, the MajorityCalling mode with downsample \
+        \from the total number of reads a number of reads \
+        \(without replacement) equal to the --minDepth given. This mitigates \
+        \reference bias in the MajorityCalling model, which increases with higher coverage.")
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <>
         OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
         OP.help "random seed used for random calling. If not given, use \
@@ -391,57 +272,33 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         OP.value 1 <> OP.showDefault <> OP.metavar "<DEPTH>" <>
         OP.help "specify the minimum depth for a call. For sites with fewer \
             \reads than this number, declare Missing")
-    parseMinSupport = OP.option OP.auto (OP.long "minSupport" <>
-        OP.value 1 <> OP.showDefault <> OP.metavar "<MIN_SUPPORT>" <>
-        OP.help "specify the minimum number of supporting reads for the \
-        \RareCalling (deprecated) method. This option is ignored for other \
-        \calling methods. For RareCalling, you should use \
-        \--minSupport 2 or higher.")
-    parseDownSampling = OP.switch (OP.long "withDownSampling" <> OP.help
-        "When this switch is given, the MajorityCalling mode with downsample \
-        \from the total number of reads a number of reads \
-        \(without replacement) equal to the --minDepth given. This mitigates a \
-        \subtle reference bias in the MajorityCalling model.")
-    parseTransitionsMode = OP.option OP.auto (OP.long "transitionsMode" <>
-        OP.short 't' <> OP.value AllSites <> OP.metavar "MODE" <>
-        OP.showDefault <> OP.help "Three \
-        \options possible: SkipTransitions: skip transitions in the output; \
-        \TransitionsMissing: output transition sites as missing data in all \
-        \samples; AllSites: output all sites including transitions.")
-    parseSnpFile = OP.option (Just . fromText . T.pack <$> OP.str)
-        (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <>
+    parseTransitionsMode = parseSkipTransitions <|> parseTransitionsMissing <|> pure AllSites
+    parseSkipTransitions = OP.flag' (OP.long "skipTransitions" <> OP.help "skip transition SNPs entirely in the output, resulting in a dataset with fewer sites.\
+        \ If neither option --skipTransitions nor --transitionsMissing is set, output all sites")
+    parseTransitionsMissing = OP.flag' (OP.long "transitionsMissing" <> OP.help "mark transitions as missing in the output, but do output the sites. \
+        \If neither option --skipTransitions nor --transitionsMissing is set, output all sites")
+    parseSnpFile = OP.strOption (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <>
         OP.metavar "<FILE>" <> OP.help "specify an Eigenstrat SNP file for \
         \the positions and alleles to call. All \
         \positions in the SNP file will be output, adding missing data where \
         \necessary. Note that pileupCaller automatically checks whether \
         \alleles in the SNP file are flipped with respect to the human \
         \reference. But it assumes that the strand-orientation is the same.")
-    parseOutChrom = OP.option (Just . Chrom . T.pack <$> OP.str) (OP.long "outChrom" <>
-        OP.metavar "<CHROM>" <> OP.help "specify the output chromosome name. \
-        \This can be useful if the input chromosome name is something like \
-        \'chr1' and you would like to merge with a dataset that has just \
-        \'1'." <> OP.value Nothing)
-    parseFormat = OP.option OP.auto (OP.metavar "<OUT_FORMAT>" <>
-        OP.long "format" <> OP.short 'o' <> OP.value FreqSumFormat <>
-        OP.showDefault <>
-        OP.help "specify output format: EigenStrat or FreqSum")
+    parseFormat = parseEigenstratPrefix <|> pure FreqSumFormat
+    parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
+        OP.metavar "<FILE_PREFIX>" <>
+        OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat SNP and IND \
+        \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt \
+        \If not set, output will be FreqSum (Default)")
     parseSampleNames = parseSampleNameList <|> parseSampleNameFile
-    parseSampleNameList = OP.option (Left . T.splitOn "," . T.pack <$> OP.str)
+    parseSampleNameList = OP.option (Left . splitOn "," <$> OP.str)
         (OP.long "sampleNames" <> OP.metavar "NAME1,NAME2,..." <>
         OP.help "give the names of the samples as comma-separated list")
-    parseSampleNameFile = OP.option (Right . fromText . T.pack <$> OP.str)
-        (OP.long "sampleNameFile" <> OP.metavar "<FILE>" <>
+    parseSampleNameFile = OP.strOption (OP.long "sampleNameFile" <> OP.metavar "<FILE>" <>
         OP.help "give the names of the samples in a file with one name per \
         \line")
-    parseSamplePopName = OP.option (T.pack <$> OP.str)
-        (OP.long "samplePopName" <> OP.value "Unknown" <> OP.showDefault <>
+    parseSamplePopName = OP.strOption (OP.long "samplePopName" <> OP.value "Unknown" <> OP.showDefault <>
         OP.metavar "POP" <>
         OP.help "specify the population name of the samples, which is included\
         \ in the output *.ind.txt file. This will be ignored if the output \
         \format is not Eigenstrat")
-    parseEigenstratOutPrefix = OP.option (Just . fromText . T.pack <$> OP.str)
-        (OP.long "eigenstratOutPrefix" <> OP.short 'e' <>
-        OP.value Nothing <> OP.metavar "<FILE_PREFIX>" <>
-        OP.help "specify the filenames for the EigenStrat SNP and IND \
-        \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt \
-        \Ignored if Output format is not Eigenstrat")

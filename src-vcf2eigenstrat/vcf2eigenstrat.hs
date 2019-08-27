@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import SeqTools.OrderedZip (orderedZip)
+import Pipes.OrderedZip (orderedZip)
 import SequenceFormats.Fasta (loadFastaChrom)
 import SequenceFormats.VCF (readVCFfromStdIn, VCFheader(..), VCFentry(..),
                      isBiallelicSnp, isTransversionSnp, getDosages, vcfToFreqSumEntry)
@@ -15,8 +15,6 @@ import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.ByteString.Char8 as B
 import Data.Monoid ((<>))
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
 -- import Debug.Trace (trace)
 import Data.Vector (fromList)
 import Data.Version (showVersion)
@@ -28,7 +26,6 @@ import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
 import qualified Pipes.Safe.Prelude as S
 import System.IO (IOMode(..))
-import Turtle (format, s, d, (%))
 
 data ProgOpt = ProgOpt {
     optSnpPosFile :: Maybe FilePath,
@@ -74,11 +71,11 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseFillHomRef <*> parseOutPrefix <
                                   OP.metavar "<FILE_PREFIX>" <>
                                   OP.help "specify the filenames for the EigenStrat SNP and IND \
                                   \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt")
-    parseChrom = OP.option (Chrom . T.pack <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
+    parseChrom = OP.option (Chrom <$> OP.str) (OP.long "chrom" <> OP.short 'c' <>
                             OP.metavar "<CHROM>" <> OP.help "specify the chromosome in the VCF \
                             \file to \
                             \call from. This is important if a SNP file has been given.")
-    parseOutChrom = OP.option (Just . Chrom . T.pack <$> OP.str)
+    parseOutChrom = OP.option (Just . Chrom <$> OP.str)
         (OP.long "outChrom" <> OP.value Nothing <> OP.metavar "<CHROM>" <>
         OP.help "specify the output chromosome name" <> OP.value Nothing)
     parseTransversionsOnly = OP.switch (OP.long "transversionsOnly" <> OP.short 't' <>
@@ -112,8 +109,8 @@ runMain (ProgOpt snpPosFile fillHomRef outPrefix chrom maybeOutChrom transversio
             writeEigenstrat genoOut snpOut indOut indEntries
   where
     filterTransitions = if transversionsOnly
-                        then P.filter (\e -> isTransversionSnp (T.singleton $ fsRef e)
-                            [T.singleton $ fsAlt e])
+                        then P.filter (\e -> isTransversionSnp (B.singleton $ fsRef e)
+                            [B.singleton $ fsAlt e])
                         else cat
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> Chrom -> FilePath ->

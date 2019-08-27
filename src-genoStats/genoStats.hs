@@ -1,34 +1,31 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified SequenceFormats.Eigenstrat as E
 import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader(..), 
     FreqSumEntry(..))
-import SequenceFormats.Eigenstrat (readEigenstrat)
+import SequenceFormats.Eigenstrat (readEigenstrat, GenoEntry(..), GenoLine, EigenstratSnpEntry(..), EigenstratIndEntry(..))
 import SequenceFormats.Utils (Chrom(..))
 
-import Control.Foldl (purely, Fold)
+import Control.Applicative ((<|>))
+import Control.Foldl (purely, Fold(..))
 import Control.Monad (forM_)
-import Data.Text (Text, pack, unpack)
-import Data.Text.IO (putStrLn)
-import Data.Vector (toList)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import qualified Data.ByteString.Char8 as B
 import Data.Version (showVersion)
 import qualified Data.Vector as V
 import Lens.Family2 (view)
+import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
 import Pipes (for, Producer, (>->), yield, Consumer, cat)
 import Pipes.Group (groupsBy, folds)
 import Pipes.Safe (MonadSafe, runSafeT)
-import Pipes.Prelude (tee, fold)
-import Prelude hiding (FilePath, putStrLn)
-import qualified Text.PrettyPrint.ANSI.Leijen as PT
-import Turtle hiding (stdin, x, view, cat, fold)
+import qualified Pipes.Prelude as P
+import System.IO (hPutStrLn, stderr)
 
 data ProgOpt = ProgOpt InputOption
 
 data InputOption = FreqsumInput (Maybe FilePath) | EigenstratInput FilePath FilePath FilePath
 
-data InputEntry = InputEntry Chrom (V.Vector Genotype) deriving (Show)
-data Genotype = HomRef | HomAlt | Het | Missing deriving (Show)
+data InputEntry = InputEntry Chrom GenoLine deriving (Show)
 
 type StatsReportAllSamples = [StatsReport]
 
@@ -40,48 +37,50 @@ data StatsReport = StatsReport {
 } deriving (Show)
 
 main :: IO ()
-main = options descString argParser >>= runWithOpts
-  where
-    descString = Description $ PT.text ("genoStats " ++ showVersion version ++ ": A program \
-        \to evaluate per-chromosome and total statistics \
-        \of genotyping data, read either as Eigenstrat or FreqSum")
+main = OP.execParser optionSpec >>= runWithOpts
 
-argParser :: Parser ProgOpt
+optionSpec :: OP.ParserInfo ProgOpt
+optionSpec = OP.info (OP.helper <*> argParser) (
+    OP.fullDesc <>
+    OP.progDesc ("genoStats " ++ showVersion version ++ ": A program \
+        \to evaluate per-chromosome and total statistics \
+        \of genotyping data, read either as Eigenstrat or FreqSum"))
+
+argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> (parseFreqsumInput <|> parseEigenstratInput)
 
-parseFreqsumInput :: Parser InputOption
+parseFreqsumInput :: OP.Parser InputOption
 parseFreqsumInput =
-    process <$> optText "freqsum" 'f' "a freqsum file to read as input. Use - to read from stdin"
+    process <$> OP.strOption (OP.long "freqsum" <> OP.short 'f' <> OP.help "a freqsum file to read as input. Use - to read from stdin (the default)" <>
+        OP.value "-" <> OP.showDefault <> OP.metavar "FILEPATH")
   where
     process p =
         if p == "-"
         then FreqsumInput Nothing
-        else FreqsumInput . Just . fromText $ p
+        else FreqsumInput (Just p)
 
-parseEigenstratInput :: Parser InputOption
+parseEigenstratInput :: OP.Parser InputOption
 parseEigenstratInput = EigenstratInput <$> parseGenoFile <*> parseSnpFile <*> parseIndFile
   where
-    parseGenoFile = optPath "eigenstratGeno" 'g' "Eigenstrat Geno File"
-    parseSnpFile = optPath "eigenstratSnp" 's' "Eigenstrat Snp File"
-    parseIndFile = optPath "eigenstratInd" 'i' "Eigenstrat Ind File"
+    parseGenoFile = OP.strOption (OP.long "eigenstratGeno" <> OP.short 'g' <> OP.help "Eigenstrat Geno File" <> OP.metavar "FILEPATH")
+    parseSnpFile =  OP.strOption (OP.long "eigenstratSnp" <> OP.short 's' <> OP.help "Eigenstrat Snp File" <> OP.metavar "FILEPATH")
+    parseIndFile =  OP.strOption (OP.long "eigenstratInd" <> OP.short 'i' <> OP.help "Eigenstrat Ind File" <> OP.metavar "FILEPATH")
 
 runWithOpts :: ProgOpt -> IO ()
-runWithOpts (ProgOpt inputOpt) = do
-    runSafeT $ do
-        (names, entryProducer) <- case inputOpt of 
-            FreqsumInput fsFile -> runWithFreqSum fsFile
-            EigenstratInput genoFile snpFile indFile -> runWithEigenstrat genoFile snpFile indFile
-        err . unsafeTextToLine $ format ("processing samples: "%w) names
-        let p = runStats names entryProducer >-> tee (reportStats names)
-        totalReport <- purely fold (accumulateAllChromStats names) p
-        printReports names totalReport
-        -- runEffect $ runStats names entryProducer >-> tee (reportStats names) >-> reportTotal names
+runWithOpts (ProgOpt inputOpt) = runSafeT $ do
+    (names, entryProducer) <- case inputOpt of 
+        FreqsumInput fsFile -> runWithFreqSum fsFile
+        EigenstratInput genoFile snpFile indFile -> runWithEigenstrat genoFile snpFile indFile
+    liftIO $ hPutStrLn stderr ("processing samples: " <> show names)
+    let p = runStats names entryProducer >-> P.tee (reportStats names)
+    totalReport <- purely P.fold (accumulateAllChromStats names) p
+    printReports names totalReport
 
-runWithFreqSum :: (MonadSafe m) => Maybe FilePath -> m ([Text], Producer InputEntry m ())
+runWithFreqSum :: (MonadSafe m) => Maybe FilePath -> m ([String], Producer InputEntry m ())
 runWithFreqSum fsFile = do
     (FreqSumHeader names nrHaps, fsProd) <- case fsFile of
         Nothing -> readFreqSumStdIn
-        Just fn -> readFreqSumFile (unpack $ format fp fn)
+        Just fn -> readFreqSumFile fn
     let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ counts) -> do
             let genotypes = V.fromList $ do
                     (count', nrHap) <- zip counts nrHaps
@@ -92,28 +91,17 @@ runWithFreqSum fsFile = do
                         Nothing -> return Missing
                         _ -> error "should not happen"
             yield $ InputEntry chrom genotypes
-    return (names, prod)
+    return (map B.unpack names, prod)
 
 runWithEigenstrat :: (MonadSafe m) =>
-    FilePath -> FilePath -> FilePath -> m ([Text], Producer InputEntry m ())
+    FilePath -> FilePath -> FilePath -> m ([String], Producer InputEntry m ())
 runWithEigenstrat genoFile snpFile indFile = do
-    let genoFile' = unpack $ format fp genoFile
-        snpFile' = unpack $ format fp snpFile
-        indFile' = unpack $ format fp indFile
-    (indEntries, genoStream) <- readEigenstrat genoFile' snpFile' indFile'
-    let names = [name | E.EigenstratIndEntry name _ _ <- indEntries]
-    let prod = for genoStream $ \(E.EigenstratSnpEntry chrom _ _ _ _ _, genoLine) -> do
-            let genotypes = V.fromList $ do
-                    geno <- toList genoLine
-                    case geno of
-                        E.HomRef -> return HomRef
-                        E.HomAlt -> return HomAlt
-                        E.Het -> return Het
-                        E.Missing -> return Missing
-            yield $ InputEntry chrom genotypes
+    (indEntries, genoStream) <- readEigenstrat genoFile snpFile indFile
+    let names = [name | EigenstratIndEntry name _ _ <- indEntries]
+    let prod = genoStream >-> P.map (\(EigenstratSnpEntry chrom _ _ _ _ _, genoLine) -> InputEntry chrom genoLine)
     return (names, prod)
 
-runStats :: (MonadIO m) => [Text] -> Producer InputEntry m () ->
+runStats :: (MonadIO m) => [String] -> Producer InputEntry m () ->
     Producer (Chrom, StatsReportAllSamples) m ()
 runStats names entryProducer =
     let groupedProd = view (groupsBy (\(InputEntry c1 _) (InputEntry c2 _) -> c1 == c2))        
@@ -141,20 +129,19 @@ runStatsPerChromPerSample i = Fold step initial extract
     extract :: StatsReport -> StatsReport
     extract = id
     
-reportStats :: (MonadIO m) => [Text] -> Consumer (Chrom, StatsReportAllSamples) m ()
+reportStats :: (MonadIO m) => [String] -> Consumer (Chrom, StatsReportAllSamples) m ()
 reportStats names = do
-    liftIO . putStrLn $ format ("Chrom\tSample\tMissing\tHomRef\tHomAlt\tHet")
+    liftIO . putStrLn $ "Chrom\tSample\tMissing\tHomRef\tHomAlt\tHet"
     for cat $ \(chrom, reports) -> printReports names (chrom, reports)
 
-printReports :: (MonadIO m) => [Text] -> (Chrom, StatsReportAllSamples) -> m ()
+printReports :: (MonadIO m) => [String] -> (Chrom, StatsReportAllSamples) -> m ()
 printReports names (chrom, reports) =
     forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) -> do
         let total = mis + ref + alt + het
-            misPerc = round $ (fromIntegral mis / fromIntegral total) * 100.0
-        liftIO . putStrLn $ format (s%"\t"%s%"\t"%d%" ("%d%"%)\t"%d%"\t"%d%"\t"%d) (unChrom chrom) 
-            n mis misPerc ref alt het
+            misPerc = round $ (fromIntegral mis / fromIntegral total) * (100.0 :: Double) :: Int
+        liftIO . putStrLn $ unChrom chrom <> show n <> show mis <> show misPerc <> show ref <> show alt <> show het
 
-accumulateAllChromStats :: [Text] ->
+accumulateAllChromStats :: [String] ->
     Fold (Chrom, StatsReportAllSamples) (Chrom, StatsReportAllSamples)
 accumulateAllChromStats names = Fold step initial extract
   where
