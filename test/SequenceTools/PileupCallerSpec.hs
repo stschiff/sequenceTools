@@ -5,12 +5,15 @@ import SequenceFormats.Eigenstrat (GenoEntry(..), EigenstratSnpEntry(..))
 import SequenceFormats.Utils (Chrom(..))
 import SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..))
+    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
+    TransitionsMode(..), filterTransitions)
 
 import Control.Monad (replicateM, forM_)
 import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
 import Data.Vector (fromList)
+import Pipes (each, (>->))
+import qualified Pipes.Prelude as P
 import Test.Hspec
 
 spec :: Spec
@@ -23,6 +26,7 @@ spec = do
     testCallGenotypeFromPileup
     testCallToEigenstratGeno
     testFreqSumToEigenstrat
+    testFilterTransitions
 
 testCallToDosage :: Spec
 testCallToDosage = describe "callToDosage" $ do
@@ -127,5 +131,33 @@ testFreqSumToEigenstrat = describe "freqSumtoEigenstrat" $ do
         genoLine = fromList [HomRef, HomAlt, HomAlt, Missing, HomRef]
     it "should convert a freqSum example correctly to eigenstrat" $
         freqSumToEigenstrat True fs `shouldBe` (es, genoLine)
-    
 
+
+mockFreqSumData :: [FreqSumEntry]
+mockFreqSumData = [
+    FreqSumEntry (Chrom "1") 1000 'A' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0],
+    FreqSumEntry (Chrom "1") 2000 'C' 'T' [Just 1, Just 2, Nothing, Just 0, Just 0],
+    FreqSumEntry (Chrom "1") 3000 'A' 'G' [Just 1, Just 2, Nothing, Just 0, Just 0],
+    FreqSumEntry (Chrom "2") 1000 'A' 'G' [Just 1, Just 2, Nothing, Just 0, Just 0],
+    FreqSumEntry (Chrom "2") 2000 'T' 'A' [Just 1, Just 2, Nothing, Just 0, Just 0],
+    FreqSumEntry (Chrom "2") 3000 'T' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0]]
+
+testFilterTransitions :: Spec
+testFilterTransitions = describe "filterTransitions" $ do
+    it "should remove transitions with SkipTransitions" $ do
+        let r = P.toList $ each mockFreqSumData >-> filterTransitions SkipTransitions
+        r `shouldBe` [
+            FreqSumEntry (Chrom "1") 1000 'A' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0],
+            FreqSumEntry (Chrom "2") 2000 'T' 'A' [Just 1, Just 2, Nothing, Just 0, Just 0]]
+    it "should mark transitions as missing with TransitionsMissing" $ do
+        let r = P.toList $ each mockFreqSumData >-> filterTransitions TransitionsMissing
+        r `shouldBe` [
+            FreqSumEntry (Chrom "1") 1000 'A' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0],
+            FreqSumEntry (Chrom "1") 2000 'C' 'T' [Nothing, Nothing, Nothing, Nothing, Nothing],
+            FreqSumEntry (Chrom "1") 3000 'A' 'G' [Nothing, Nothing, Nothing, Nothing, Nothing],
+            FreqSumEntry (Chrom "2") 1000 'A' 'G' [Nothing, Nothing, Nothing, Nothing, Nothing],
+            FreqSumEntry (Chrom "2") 2000 'T' 'A' [Just 1, Just 2, Nothing, Just 0, Just 0],
+            FreqSumEntry (Chrom "2") 3000 'T' 'C' [Nothing, Nothing, Nothing, Nothing, Nothing]]
+    it "should output all sites with AllSites" $ do
+        let r = P.toList $ each mockFreqSumData >-> filterTransitions AllSites
+        r `shouldBe` mockFreqSumData

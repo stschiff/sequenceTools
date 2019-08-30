@@ -1,6 +1,7 @@
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..)) where
+    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
+    TransitionsMode(..), filterTransitions) where
 
 import SequenceFormats.Utils (Chrom(..))
 import SequenceFormats.FreqSum (FreqSumEntry(..))
@@ -10,12 +11,16 @@ import SequenceTools.Utils (sampleWithoutReplacement)
 import qualified Data.ByteString.Char8 as B
 import Data.List (sortOn, group, sort)
 import Data.Vector (fromList)
+import Pipes (Pipe, cat)
+import qualified Pipes.Prelude as P
 
 -- |A datatype to represent a single genotype call
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall deriving (Show, Eq)
 
 -- |A datatype to specify the calling mode
 data CallingMode = MajorityCalling Bool | RandomCalling | RandomDiploidCalling
+
+data TransitionsMode = TransitionsMissing | SkipTransitions | AllSites
 
 -- |a function to turn a call into the dosage of non-reference alleles
 callToDosage :: Char -> Char -> Call -> Maybe Int
@@ -107,3 +112,21 @@ callToEigenstratGeno diploidizeCall c =
             Just 2 -> HomAlt
             Nothing -> Missing
             _ -> error ("unknown genotype " ++ show c)
+
+filterTransitions :: (Monad m) => TransitionsMode -> Pipe FreqSumEntry FreqSumEntry m ()
+filterTransitions transversionsMode =
+    case transversionsMode of
+        SkipTransitions ->
+            P.filter (\(FreqSumEntry _ _ ref alt _) -> isTransversion ref alt)
+        TransitionsMissing ->
+            P.map (\(FreqSumEntry chrom pos ref alt calls) ->
+                let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
+                in  FreqSumEntry chrom pos ref alt calls')
+        AllSites -> cat
+  where
+    isTransversion ref alt = not $ isTransition ref alt
+    isTransition ref alt =
+        ((ref == 'A') && (alt == 'G')) ||
+        ((ref == 'G') && (alt == 'A')) ||
+        ((ref == 'C') && (alt == 'T')) ||
+        ((ref == 'T') && (alt == 'C'))
