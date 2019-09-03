@@ -4,6 +4,7 @@ import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader
     FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (readEigenstrat, GenoEntry(..), GenoLine, EigenstratSnpEntry(..), EigenstratIndEntry(..))
 import SequenceFormats.Utils (Chrom(..))
+import SequenceTools (versionInfoOpt, versionInfoText)
 
 import Control.Applicative ((<|>))
 import Control.Foldl (purely, Fold(..))
@@ -40,11 +41,12 @@ main :: IO ()
 main = OP.execParser optionSpec >>= runWithOpts
 
 optionSpec :: OP.ParserInfo ProgOpt
-optionSpec = OP.info (OP.helper <*> argParser) (
-    OP.fullDesc <>
-    OP.progDesc ("genoStats " ++ showVersion version ++ ": A program \
+optionSpec = OP.info parserInfo
+  where
+    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser) (
+        OP.progDesc ("A program \
         \to evaluate per-chromosome and total statistics \
-        \of genotyping data, read either as Eigenstrat or FreqSum"))
+        \of genotyping data, read either as Eigenstrat or FreqSum. " <> versionInfoText))
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> (parseFreqsumInput <|> parseEigenstratInput)
