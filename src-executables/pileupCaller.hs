@@ -26,6 +26,7 @@ import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 data ProgOpt = ProgOpt {
     optCallingMode :: CallingMode,
+    optKeepInCongruentReads :: Bool,
     optSeed :: Maybe Int,
     optMinDepth :: Int,
     optTransitionsMode :: TransitionsMode,
@@ -94,6 +95,7 @@ pileupToFreqSum snpFileName pileupProducer = do
         jointProd =
             orderedZip cmpSnpToPileupPos snpProdOrderChecked pileupProdOrderChecked
     mode <- asks optCallingMode
+    keepInCongruentReads <- asks optKeepInCongruentReads
     minDepth <- asks optMinDepth
     let ret = for jointProd $ \jointEntry ->
             case jointEntry of
@@ -101,9 +103,12 @@ pileupToFreqSum snpFileName pileupProducer = do
                     yield $ FreqSumEntry snpChrom_ snpPos_ (Just . B.unpack $ snpId_) snpRef_ snpAlt_
                             (replicate (length sampleNames) Nothing)
                 (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ snpId_ snpRef_ snpAlt_),
-                 Just pileupRow) -> do
-                    let PileupRow _ _ _ entryPerSample _ = pileupRow
-                    calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) entryPerSample
+                 Just (PileupRow _ _ _ entryPerSample _)) -> do
+                    let cleanEntryPerSample =
+                            if keepInCongruentReads
+                                then entryPerSample
+                                else map (filter (\c -> c == snpRef_ || c == snpAlt_)) entryPerSample
+                    calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) cleanEntryPerSample
                     let genotypes = map (callToDosage snpRef_ snpAlt_) calls
                     yield (FreqSumEntry snpChrom_ snpPos_ (Just . B.unpack $ snpId_) snpRef_ snpAlt_ genotypes)
                 _ -> return ()
@@ -153,7 +158,7 @@ outputEigenStrat outPrefix popName freqSumProducer = do
                 writeEigenstrat genoOut snpOut indOut indEntries
 
 argParser :: OP.Parser ProgOpt
-argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
+argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parseSeed <*> parseMinDepth <*>
     parseTransitionsMode <*> parseSnpFile <*> parseFormat <*> parseSampleNames
   where
     parseCallingMode = parseRandomCalling <|> parseMajorityCalling <|> parseRandomDiploidCalling
@@ -177,6 +182,14 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         \(without replacement) equal to the --minDepth given. This mitigates \
         \reference bias in the MajorityCalling model, which increases with higher coverage. \
         \The recommendation for rare-allele calling is --majorityCall --downsampling --minDepth 3")
+    parseKeepIncongruentReads = OP.switch (OP.long "keepIncongruentReads" <> OP.help "By default, \
+        \pileupCaller removes reads with alleles that are neither of the two alleles specified in the SNP file. \
+        \Any sampling (depending on the calling mode) is therefore by default constrained to reads \
+        \supporting the reference an alternative allele, and any other alleles (for example at triallelic sites or \
+        \due to damage) are removed. With this flag given, sampling is performed unconstrained on all reads. If \
+        \a read is sampled with an allele that is neither of the two given alleles, a missing genotype is generated. \
+        \IMPORTANT NOTE: The default behaviour has changed in pileupCaller. If you want to emulate the previous \
+        \behaviour, use this flag. I recommend now to NOT set this flag and use the new behaviour.")
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <>
         OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
         OP.help "random seed used for the random number generator. If not given, use \
