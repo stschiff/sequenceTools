@@ -5,12 +5,12 @@
 
 packages:
 - completed:
-    hackage: pipes-ordered-zip-1.0.1@sha256:25d60c464bd299751a03f283e4488d3cfa725133248a53b78ac40f285f4a8533,1204
+    hackage: pipes-ordered-zip-1.1.0@sha256:c4b25b596e2a3de4788e7944c3ceb83ed5384c975f6436d0bfb9ffa08625cc85,1324
     pantry-tree:
-      size: 386
-      sha256: 4bdbd0fba82452438a9daad6bfd3401bacce1297421d71bd1c7798dce126098b
+      size: 445
+      sha256: b4c9fb1b5f079f31be7bdf13766e20839baf60c1b354fffd10387d13678c4ea4
   original:
-    hackage: pipes-ordered-zip-1.0.1
+    hackage: pipes-ordered-zip-1.1.0
 - completed:
     hackage: sequence-formats-1.4.0@sha256:7ce857a0fd15d0d6843049a2a761bb91a827e8926e7f42f0d8f79660d05959a9,2217
     pantry-tree:

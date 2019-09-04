@@ -4,6 +4,7 @@ import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..)
     EigenstratIndEntry(..), Sex(..), writeEigenstrat)
 import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
 import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
+import Pipes.OrderedZip (orderCheckPipe)
 
 import SequenceTools.Utils (versionInfoOpt, versionInfoText)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
@@ -39,18 +40,26 @@ type App = ReaderT ProgOpt (SafeT IO)
 main :: IO ()
 main = OP.execParser parserInfo >>= runSafeT . runReaderT runWithOpts
   where
-    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser) (OP.progDescDoc (Just programHelpDoc))
+    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
+        (OP.progDescDoc (Just programHelpDoc))
 
 programHelpDoc :: PP.Doc
-programHelpDoc = part1 PP.<$> PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$> part2
+programHelpDoc =
+    part1 PP.<$>
+    PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$>
+    part2
   where
-    part1 = PP.fillSep . map PP.text . words $ "PileupCaller is a simple tool to create genotype calls from bam files. \
+    part1 = PP.fillSep . map PP.text . words $
+        "PileupCaller is a simple tool to create genotype calls from bam files. \
         \You need to convert bam files into the mpileup-format, specified at \
         \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \
         \to create a multi-sample mpileup file to be processed with pileupCaller is"
-    samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $ "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -f <FASTA_REFERENCE_FILE> \
+    samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $
+        "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -f <FASTA_REFERENCE_FILE> \
         \Sample1.bam Sample2.bam Sample3.bam | pileupCaller ..."
-    part2 = PP.fillSep . map PP.text . words $ "Note that flag -B in samtools is very important to reduce reference bias in low coverage data. " ++ versionInfoText
+    part2 = PP.fillSep . map PP.text . words $
+        "Note that flag -B in samtools is very important to reduce reference \
+        \bias in low coverage data. " ++ versionInfoText
 
 
 runWithOpts :: App ()
@@ -71,14 +80,19 @@ setRandomSeed = do
         Nothing -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
 
-pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
+pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
+    App (Producer FreqSumEntry (SafeT IO) ())
 pileupToFreqSum snpFileName pileupProducer = do
     sampleNameSpec <- asks optSampleNames
     sampleNames <- case sampleNameSpec of
         Left list -> return list
         Right fn -> liftIO (lines <$> readFile fn)
-    let snpProd = readEigenstratSnpFile snpFileName
-        jointProd = orderedZip cmp snpProd pileupProducer
+    let snpProdOrderChecked =
+            readEigenstratSnpFile snpFileName >-> orderCheckPipe cmpSnpPos
+        pileupProdOrderChecked =
+            pileupProducer >-> orderCheckPipe cmpPileupPos
+        jointProd =
+            orderedZip cmpSnpToPileupPos snpProdOrderChecked pileupProdOrderChecked
     mode <- asks optCallingMode
     minDepth <- asks optMinDepth
     let ret = for jointProd $ \jointEntry ->
@@ -95,8 +109,12 @@ pileupToFreqSum snpFileName pileupProducer = do
                 _ -> return ()
     return (fst <$> ret)
   where
-    cmp (EigenstratSnpEntry snpChrom_ snpPos_ _ _ _ _) (PileupRow pChrom pPos _ _ _) =
-        (snpChrom_, snpPos_) `compare` (pChrom, pPos)
+    cmpSnpPos :: EigenstratSnpEntry -> EigenstratSnpEntry -> Ordering
+    cmpSnpPos es1 es2 = (snpChrom es1, snpPos es1) `compare` (snpChrom es2, snpPos es2)
+    cmpPileupPos :: PileupRow -> PileupRow -> Ordering
+    cmpPileupPos pr1 pr2 = (pileupChrom pr1, pileupPos pr1) `compare` (pileupChrom pr2, pileupPos pr2)
+    cmpSnpToPileupPos :: EigenstratSnpEntry -> PileupRow -> Ordering
+    cmpSnpToPileupPos es pr = (snpChrom es, snpPos es) `compare` (pileupChrom pr, pileupPos pr)
 
 outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()
 outputFreqSum freqSumProducer = do
@@ -182,7 +200,12 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
         \alleles in the SNP file are flipped with respect to the human \
         \reference, and in those cases flips the genotypes accordingly. \
         \But it assumes that the strand-orientation of the SNPs given in the SNP list is the one \
-        \in the reference genome used in the BAM file underlying the pileup input.")
+        \in the reference genome used in the BAM file underlying the pileup input. \
+        \Note that both the SNP file and the incoming pileup data are assumed to be \
+        \ordered by chromosome and position. The chromosome order is 1-22,X,Y,MT, or \
+        \chr1-chr22,chrX,chrY,chrMT. In case of non-human data with different chromosome \
+        \names, you should convert all names to numbers. They will always considered to \
+        \be numerically ordered.")
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
