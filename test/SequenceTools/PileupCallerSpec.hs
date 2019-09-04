@@ -6,7 +6,7 @@ import SequenceFormats.Eigenstrat (GenoEntry(..), EigenstratSnpEntry(..))
 import SequenceFormats.Utils (Chrom(..))
 import SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
+    callRandomDiploid, dosageToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
     TransitionsMode(..), filterTransitions)
 
 import Control.Monad (replicateM, forM_)
@@ -25,7 +25,7 @@ spec = do
     testCallMajorityAllele
     testFindMajorityAlleles
     testCallGenotypeFromPileup
-    testCallToEigenstratGeno
+    testDosageToEigenstratGeno
     testFreqSumToEigenstrat
     testFilterTransitions
 
@@ -108,22 +108,22 @@ testCallRandomDiploid = describe "callRandomDiploid" $ do
         let n = length ['A' | DiploidCall a1 a2 <- r, a1 /= a2]
         n `shouldSatisfy` (\nn -> nn >= 588 && nn < 743) --p < 1e-7
 
-testCallToEigenstratGeno :: Spec
-testCallToEigenstratGeno = describe "callToEigenstratGeno" $ do
+testDosageToEigenstratGeno :: Spec
+testDosageToEigenstratGeno = describe "dosageToEigenstratGeno" $ do
     it "should give Hom-Ref for 0 pseudo-haploid" $
-        callToEigenstratGeno True (Just 0) `shouldBe` HomRef
+        dosageToEigenstratGeno True (Just 0) `shouldBe` HomRef
     it "should give Hom-Alt for 1 pseudo-haploid" $
-        callToEigenstratGeno True (Just 1) `shouldBe` HomAlt
+        dosageToEigenstratGeno True (Just 1) `shouldBe` HomAlt
     it "should give Missing for Nothing pseudo-haploid" $
-        callToEigenstratGeno True Nothing `shouldBe` Missing
+        dosageToEigenstratGeno True Nothing `shouldBe` Missing
     it "should give Hom-Ref for 0 diploid" $
-        callToEigenstratGeno False (Just 0) `shouldBe` HomRef
+        dosageToEigenstratGeno False (Just 0) `shouldBe` HomRef
     it "should give Het for 1 diploid" $
-        callToEigenstratGeno False (Just 1) `shouldBe` Het
+        dosageToEigenstratGeno False (Just 1) `shouldBe` Het
     it "should give Hom-Alt for 2 diploid" $
-        callToEigenstratGeno False (Just 2) `shouldBe` HomAlt
+        dosageToEigenstratGeno False (Just 2) `shouldBe` HomAlt
     it "should give Missing for Nothing diploid" $
-        callToEigenstratGeno False Nothing `shouldBe` Missing
+        dosageToEigenstratGeno False Nothing `shouldBe` Missing
 
 testFreqSumToEigenstrat :: Spec
 testFreqSumToEigenstrat = describe "freqSumtoEigenstrat" $ do

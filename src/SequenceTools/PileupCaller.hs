@@ -1,6 +1,6 @@
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, callToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
+    callRandomDiploid, dosageToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
     TransitionsMode(..), filterTransitions) where
 
 import SequenceFormats.Utils (Chrom(..))
@@ -95,12 +95,12 @@ freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos maybeSnpId 
             Just id_ -> B.pack id_
             Nothing -> B.pack $ c <> "_" <> show pos
         snpEntry = EigenstratSnpEntry chrom pos 0.0 snpId_ ref alt
-        geno = fromList . map (callToEigenstratGeno diploidizeCall) $ calls
+        geno = fromList . map (dosageToEigenstratGeno diploidizeCall) $ calls
     in  (snpEntry, geno)
 
--- |convert a Call to an eigenstrat-encoded genotype
-callToEigenstratGeno :: Bool -> Maybe Int -> GenoEntry
-callToEigenstratGeno diploidizeCall c =
+-- |convert a Dosage to an eigenstrat-encoded genotype
+dosageToEigenstratGeno :: Bool -> Maybe Int -> GenoEntry
+dosageToEigenstratGeno diploidizeCall c =
     if diploidizeCall then
         case c of
             Just 0 -> HomRef
