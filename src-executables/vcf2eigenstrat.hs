@@ -8,7 +8,7 @@ import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile
 import SequenceFormats.FreqSum (FreqSumEntry(..), freqSumEntryToText)
 import SequenceFormats.Utils (Chrom(..))
 
-import SequenceTools.Utils (versionInfoText)
+import SequenceTools.Utils (versionInfoText, versionInfoOpt)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (when)
@@ -17,9 +17,7 @@ import qualified Data.ByteString.Char8 as B
 import Data.Monoid ((<>))
 -- import Debug.Trace (trace)
 import Data.Vector (fromList)
-import Data.Version (showVersion)
 import qualified Options.Applicative as OP
-import Paths_sequenceTools (version)
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, MonadSafe)
@@ -34,11 +32,7 @@ readOptions :: IO ProgOpt
 readOptions = OP.execParser parserInfo
   where
     parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
-        (OP.progDesc ("A program to convert a VCF file (stdin) to Eigenstrat. Part of \
-            \sequenceTools version " ++ versionInfoText))
-    versionInfoOpt = OP.infoOption (showVersion version)
-        (OP.long "version" <> OP.help "Print version and exit")
-
+        (OP.progDesc ("A program to convert a VCF file (stdin) to Eigenstrat. " ++ versionInfoText))
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseSnpPosFile <*> parseOutPrefix
@@ -46,9 +40,11 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseOutPrefix
     parseSnpPosFile = OP.option (Just <$> OP.str)
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
                     OP.help "specify an Eigenstrat SNP file with the positions and alleles of a \
-                             \reference set. \
-                             \All  positions in the SNP file will be output, adding missing data \
-                             \or hom-ref where necessary.")
+                             \reference set. If this option is given, only positions that are both in the SNP file \
+                             \and in the VCF will be output. Without this option, all sites in the VCF will be output. \
+                             \WARNING: Sites that are not in the VCF will not be output, and this is new behaviour. \
+                             \Previously one could specify that they will be output as missing or hom-ref, but that \
+                             \feature was recently removed. I plan to implement this behaviour in the future in a new eigenstrat-merging tool.")
     parseOutPrefix = OP.strOption (OP.long "outPrefix" <> OP.short 'e' <>
                                   OP.metavar "<FILE_PREFIX>" <>
                                   OP.help "specify the filenames for the EigenStrat SNP and IND \
@@ -82,10 +78,10 @@ runJointly vcfBody nrInds snpPosFile =
 processVcfWithSnpFile :: (MonadIO m) => Int -> Pipe (Maybe EigenstratSnpEntry, Maybe VCFentry) FreqSumEntry m r
 processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
     case jointEntry of
-        (Just (EigenstratSnpEntry snpChrom' snpPos' _ _ snpRef' snpAlt'), Nothing) -> do
+        (Just (EigenstratSnpEntry snpChrom' snpPos' _ snpId' snpRef' snpAlt'), Nothing) -> do
             let dosages = replicate nrInds Nothing
-            yield $ FreqSumEntry snpChrom' snpPos' snpRef' snpAlt' dosages
-        (Just (EigenstratSnpEntry snpChrom' snpPos' _ _ snpRef' snpAlt'), Just vcfEntry) -> do
+            yield $ FreqSumEntry snpChrom' snpPos' (Just . B.unpack $ snpId') snpRef' snpAlt' dosages
+        (Just (EigenstratSnpEntry snpChrom' snpPos' _ snpId' snpRef' snpAlt'), Just vcfEntry) -> do
             dosages <- case getDosages vcfEntry of
                 Right dos -> return dos
                 Left err -> liftIO . throwIO $ AssertionFailed err
@@ -99,7 +95,7 @@ processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
                                      then map flipDosages dosages
                                      else replicate nrInds Nothing
                         _ -> replicate nrInds Nothing
-            yield $ FreqSumEntry snpChrom' snpPos' snpRef' snpAlt' normalizedDosages
+            yield $ FreqSumEntry snpChrom' snpPos' (Just . B.unpack $ snpId') snpRef' snpAlt' normalizedDosages
         _ -> return ()
   where
     flipDosages dos = case dos of
@@ -119,8 +115,10 @@ runSimple vcfBody = for vcfBody $ \e -> do
 eigenStratPipe :: (MonadIO m) => Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) m r
 eigenStratPipe = P.map vcfToEigenstrat
   where
-    vcfToEigenstrat (FreqSumEntry chrom pos ref alt dosages) =
-        let snpId' = B.pack (unChrom chrom <> show pos)
+    vcfToEigenstrat (FreqSumEntry chrom pos maybeSnpId ref alt dosages) =
+        let snpId' = case maybeSnpId of
+                Just i -> B.pack i
+                Nothing -> B.pack (unChrom chrom <> "_" <> show pos)
             snpEntry = EigenstratSnpEntry chrom pos 0.0 snpId' ref alt
             genoLine = fromList [dosageToCall d | d <- dosages]
         in  (snpEntry, genoLine)

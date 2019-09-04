@@ -11,6 +11,13 @@ packages:
       sha256: 4bdbd0fba82452438a9daad6bfd3401bacce1297421d71bd1c7798dce126098b
   original:
     hackage: pipes-ordered-zip-1.0.1
+- completed:
+    hackage: sequence-formats-1.4.0@sha256:7ce857a0fd15d0d6843049a2a761bb91a827e8926e7f42f0d8f79660d05959a9,2217
+    pantry-tree:
+      size: 1806
+      sha256: 484e6ccf145508a5088101ff687a69621be15dbce6d9fd4693b3598d60cb1939
+  original:
+    hackage: sequence-formats-1.4.0
 snapshots:
 - completed:
     size: 523448

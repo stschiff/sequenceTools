@@ -1,7 +1,6 @@
 resolver: lts-14.1
 packages:
 - '.'
-- '../sequence-formats'
 extra-deps:
 - pipes-ordered-zip-1.0.1
-# - sequence-formats-1.3.2.1
+- sequence-formats-1.4.0

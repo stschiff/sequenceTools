@@ -21,6 +21,7 @@ import Pipes.OrderedZip (orderedZip)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
 import System.Random (mkStdGen, setStdGen)
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 data ProgOpt = ProgOpt {
     optCallingMode :: CallingMode,
@@ -38,8 +39,19 @@ type App = ReaderT ProgOpt (SafeT IO)
 main :: IO ()
 main = OP.execParser parserInfo >>= runSafeT . runReaderT runWithOpts
   where
-    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
-        (OP.progDesc versionInfoText)
+    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser) (OP.progDescDoc (Just programHelpDoc))
+
+programHelpDoc :: PP.Doc
+programHelpDoc = part1 PP.<$> PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$> part2
+  where
+    part1 = PP.fillSep . map PP.text . words $ "PileupCaller is a simple tool to create genotype calls from bam files. \
+        \You need to convert bam files into the mpileup-format, specified at \
+        \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \
+        \to create a multi-sample mpileup file to be processed with pileupCaller is"
+    samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $ "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -f <FASTA_REFERENCE_FILE> \
+        \Sample1.bam Sample2.bam Sample3.bam | pileupCaller ..."
+    part2 = PP.fillSep . map PP.text . words $ "Note that flag -B in samtools is very important to reduce reference bias in low coverage data. " ++ versionInfoText
+
 
 runWithOpts :: App ()
 runWithOpts = do
@@ -71,19 +83,19 @@ pileupToFreqSum snpFileName pileupProducer = do
     minDepth <- asks optMinDepth
     let ret = for jointProd $ \jointEntry ->
             case jointEntry of
-                (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ _ snpRef_ snpAlt_), Nothing) ->
-                    yield $ FreqSumEntry snpChrom_ snpPos_ snpRef_ snpAlt_
+                (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ snpId_ snpRef_ snpAlt_), Nothing) ->
+                    yield $ FreqSumEntry snpChrom_ snpPos_ (Just . B.unpack $ snpId_) snpRef_ snpAlt_
                             (replicate (length sampleNames) Nothing)
-                (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ _ snpRef_ snpAlt_),
+                (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ snpId_ snpRef_ snpAlt_),
                  Just pileupRow) -> do
-                    let PileupRow _ _ _ entryPerSample = pileupRow
+                    let PileupRow _ _ _ entryPerSample _ = pileupRow
                     calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) entryPerSample
                     let genotypes = map (callToDosage snpRef_ snpAlt_) calls
-                    yield (FreqSumEntry snpChrom_ snpPos_ snpRef_ snpAlt_ genotypes)
+                    yield (FreqSumEntry snpChrom_ snpPos_ (Just . B.unpack $ snpId_) snpRef_ snpAlt_ genotypes)
                 _ -> return ()
     return (fst <$> ret)
   where
-    cmp (EigenstratSnpEntry snpChrom_ snpPos_ _ _ _ _) (PileupRow pChrom pPos _ _) =
+    cmp (EigenstratSnpEntry snpChrom_ snpPos_ _ _ _ _) (PileupRow pChrom pPos _ _ _) =
         (snpChrom_, snpPos_) `compare` (pChrom, pPos)
 
 outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()

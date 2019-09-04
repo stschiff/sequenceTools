@@ -90,8 +90,10 @@ callRandomDiploid alleles = do
 
 -- |convert a freqSum entry to an eigenstrat SNP entry
 freqSumToEigenstrat :: Bool -> FreqSumEntry -> (EigenstratSnpEntry, GenoLine)
-freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos ref alt calls) =
-    let snpId_ = B.pack $ c <> "_" <> show pos
+freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos maybeSnpId ref alt calls) =
+    let snpId_ = case maybeSnpId of 
+            Just id_ -> B.pack id_
+            Nothing -> B.pack $ c <> "_" <> show pos
         snpEntry = EigenstratSnpEntry chrom pos 0.0 snpId_ ref alt
         geno = fromList . map (callToEigenstratGeno diploidizeCall) $ calls
     in  (snpEntry, geno)
@@ -117,11 +119,11 @@ filterTransitions :: (Monad m) => TransitionsMode -> Pipe FreqSumEntry FreqSumEn
 filterTransitions transversionsMode =
     case transversionsMode of
         SkipTransitions ->
-            P.filter (\(FreqSumEntry _ _ ref alt _) -> isTransversion ref alt)
+            P.filter (\(FreqSumEntry _ _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
-            P.map (\(FreqSumEntry chrom pos ref alt calls) ->
+            P.map (\(FreqSumEntry chrom pos id_ ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
-                in  FreqSumEntry chrom pos ref alt calls')
+                in  FreqSumEntry chrom pos id_ ref alt calls')
         AllSites -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt

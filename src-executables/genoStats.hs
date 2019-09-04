@@ -4,18 +4,16 @@ import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader
     FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (readEigenstrat, GenoEntry(..), GenoLine, EigenstratSnpEntry(..), EigenstratIndEntry(..))
 import SequenceFormats.Utils (Chrom(..))
-import SequenceTools (versionInfoOpt, versionInfoText)
+import SequenceTools.Utils (versionInfoOpt, versionInfoText)
 
 import Control.Applicative ((<|>))
 import Control.Foldl (purely, Fold(..))
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.ByteString.Char8 as B
-import Data.Version (showVersion)
 import qualified Data.Vector as V
 import Lens.Family2 (view)
 import qualified Options.Applicative as OP
-import Paths_sequenceTools (version)
 import Pipes (for, Producer, (>->), yield, Consumer, cat)
 import Pipes.Group (groupsBy, folds)
 import Pipes.Safe (MonadSafe, runSafeT)
@@ -41,12 +39,10 @@ main :: IO ()
 main = OP.execParser optionSpec >>= runWithOpts
 
 optionSpec :: OP.ParserInfo ProgOpt
-optionSpec = OP.info parserInfo
-  where
-    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser) (
-        OP.progDesc ("A program \
-        \to evaluate per-chromosome and total statistics \
-        \of genotyping data, read either as Eigenstrat or FreqSum. " <> versionInfoText))
+optionSpec = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser) (
+    OP.progDesc ("A program \
+    \to evaluate per-chromosome and total statistics \
+    \of genotyping data, read either as Eigenstrat (by specifying options -g, -s and -i) or FreqSum (default, or by specifying option -f). " ++ versionInfoText))
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> (parseFreqsumInput <|> parseEigenstratInput)
@@ -83,7 +79,7 @@ runWithFreqSum fsFile = do
     (FreqSumHeader names nrHaps, fsProd) <- case fsFile of
         Nothing -> readFreqSumStdIn
         Just fn -> readFreqSumFile fn
-    let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ counts) -> do
+    let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ _ counts) -> do
             let genotypes = V.fromList $ do
                     (count', nrHap) <- zip counts nrHaps
                     case count' of
