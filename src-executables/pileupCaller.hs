@@ -8,7 +8,7 @@ import Pipes.OrderedZip (orderCheckPipe)
 
 import SequenceTools.Utils (versionInfoOpt, versionInfoText)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
-    freqSumToEigenstrat, filterTransitions, TransitionsMode(..))
+    freqSumToEigenstrat, filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
 
 import Control.Applicative ((<|>))
 import Control.Monad.IO.Class (liftIO)
@@ -96,21 +96,29 @@ pileupToFreqSum snpFileName pileupProducer = do
             orderedZip cmpSnpToPileupPos snpProdOrderChecked pileupProdOrderChecked
     mode <- asks optCallingMode
     keepInCongruentReads <- asks optKeepInCongruentReads
+    transisitionsMode <- asks optTransitionsMode
+    let singleStrandMode = (transisitionsMode == SingleStrandMode)
     minDepth <- asks optMinDepth
     let ret = for jointProd $ \jointEntry ->
             case jointEntry of
-                (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ snpId_ snpRef_ snpAlt_), Nothing) ->
-                    yield $ FreqSumEntry snpChrom_ snpPos_ (Just . B.unpack $ snpId_) snpRef_ snpAlt_
-                            (replicate (length sampleNames) Nothing)
-                (Just (EigenstratSnpEntry snpChrom_ snpPos_ _ snpId_ snpRef_ snpAlt_),
-                 Just (PileupRow _ _ _ entryPerSample _)) -> do
-                    let cleanEntryPerSample =
-                            if keepInCongruentReads
-                                then entryPerSample
-                                else map (filter (\c -> c == snpRef_ || c == snpAlt_)) entryPerSample
-                    calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) cleanEntryPerSample
-                    let genotypes = map (callToDosage snpRef_ snpAlt_) calls
-                    yield (FreqSumEntry snpChrom_ snpPos_ (Just . B.unpack $ snpId_) snpRef_ snpAlt_ genotypes)
+                (Just esEntry, Nothing) -> do
+                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
+                        dosages = (replicate (length sampleNames) Nothing) 
+                    yield $ FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt dosages
+                (Just esEntry, Just pRow) -> do
+                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
+                        (PileupRow _ _ _ rawPileupBasesPerSample rawStrandInfoPerSample) = pRow
+                    let cleanBasesPerSample =
+                            if   singleStrandMode
+                            then cleanSSdamageAllSamples ref alt rawPileupBasesPerSample rawStrandInfoPerSample
+                            else rawPileupBasesPerSample
+                    let congruentBasesPerSample = 
+                            if   keepInCongruentReads
+                            then cleanBasesPerSample
+                            else map (filter (\c -> c == ref || c == alt)) cleanBasesPerSample
+                    calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) congruentBasesPerSample
+                    let genotypes = map (callToDosage ref alt) calls
+                    yield (FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt genotypes)
                 _ -> return ()
     return (fst <$> ret)
   where
@@ -198,13 +206,15 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         OP.value 1 <> OP.showDefault <> OP.metavar "<DEPTH>" <>
         OP.help "specify the minimum depth for a call. For sites with fewer \
             \reads than this number, declare Missing")
-    parseTransitionsMode = parseSkipTransitions <|> parseTransitionsMissing <|> pure AllSites
+    parseTransitionsMode = parseSkipTransitions <|> parseTransitionsMissing <|> parseSingleStrandMode <|> pure AllSites
     parseSkipTransitions = OP.flag' SkipTransitions (OP.long "skipTransitions" <>
-        OP.help "skip transition SNPs entirely in the output, resulting in a dataset with fewer sites.\
-        \ If neither option --skipTransitions nor --transitionsMissing is set, output all sites")
+        OP.help "skip transition SNPs entirely in the output, resulting in a dataset with fewer sites.")
     parseTransitionsMissing = OP.flag' TransitionsMissing (OP.long "transitionsMissing" <>
-        OP.help "mark transitions as missing in the output, but do output the sites. \
-        \If neither option --skipTransitions nor --transitionsMissing is set, output all sites")
+        OP.help "mark transitions as missing in the output, but do output the sites.")
+    parseSingleStrandMode = OP.flag' SingleStrandMode (OP.long "singleStrandMode" <>
+        OP.help "At C/T polymorphisms, ignore reads aligning to the forward strand. \
+        \At G/A polymorphisms, ignore reads aligning to the reverse strand. This should \
+        \remove ancient-DNA damage in ancient DNA libraries prepared with the single-stranded protocoll.")
     parseSnpFile = OP.strOption (OP.long "snpFile" <> OP.short 'f' <>
         OP.metavar "<FILE>" <> OP.help "an Eigenstrat-formatted SNP list file for \
         \the positions and alleles to call. All \
@@ -214,11 +224,11 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         \reference, and in those cases flips the genotypes accordingly. \
         \But it assumes that the strand-orientation of the SNPs given in the SNP list is the one \
         \in the reference genome used in the BAM file underlying the pileup input. \
-        \Note that both the SNP file and the incoming pileup data are assumed to be \
-        \ordered by chromosome and position. The chromosome order is 1-22,X,Y,MT, or \
-        \chr1-chr22,chrX,chrY,chrMT. In case of non-human data with different chromosome \
+        \Note that both the SNP file and the incoming pileup data have to be \
+        \ordered by chromosome and position, and this is checked. The chromosome order in humans is 1-22,X,Y,MT. \
+        \Chromosome can generally begin with \"chr\". In case of non-human data with different chromosome \
         \names, you should convert all names to numbers. They will always considered to \
-        \be numerically ordered.")
+        \be numerically ordered, even beyond 22.")
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>

@@ -7,3 +7,5 @@ V 1.3.0: Lots of refactoring. Lots of testing. Removed some features in vcf2eige
 
 V 1.3.1: Bumped dependency on sequence-formats to new sequence-formats-1.4.0, which includes strand-information in pileup data, as well as 
          rsIds in freqSum to output the correct rsId, and an option to parse chromosomes X, Y and MT.
+
+V 1.4.0: Added single strand mode, and new triallelic treatment.

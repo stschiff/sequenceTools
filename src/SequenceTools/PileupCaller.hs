@@ -1,11 +1,12 @@
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
     callRandomDiploid, dosageToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
-    TransitionsMode(..), filterTransitions) where
+    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples) where
 
 import SequenceFormats.Utils (Chrom(..))
 import SequenceFormats.FreqSum (FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), GenoEntry(..), GenoLine)
+import SequenceFormats.Pileup (Strand(..))
 import SequenceTools.Utils (sampleWithoutReplacement)
 
 import qualified Data.ByteString.Char8 as B
@@ -20,7 +21,7 @@ data Call = HaploidCall Char | DiploidCall Char Char | MissingCall deriving (Sho
 -- |A datatype to specify the calling mode
 data CallingMode = MajorityCalling Bool | RandomCalling | RandomDiploidCalling
 
-data TransitionsMode = TransitionsMissing | SkipTransitions | AllSites
+data TransitionsMode = TransitionsMissing | SkipTransitions | SingleStrandMode | AllSites deriving (Eq)
 
 -- |a function to turn a call into the dosage of non-reference alleles
 callToDosage :: Char -> Char -> Call -> Maybe Int
@@ -124,7 +125,7 @@ filterTransitions transversionsMode =
             P.map (\(FreqSumEntry chrom pos id_ ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
                 in  FreqSumEntry chrom pos id_ ref alt calls')
-        AllSites -> cat
+        _ -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt
     isTransition ref alt =
@@ -132,3 +133,18 @@ filterTransitions transversionsMode =
         ((ref == 'G') && (alt == 'A')) ||
         ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
+
+cleanSSdamageAllSamples :: Char -> Char -> [String] -> [[Strand]] -> [String]
+cleanSSdamageAllSamples ref alt basesPerSample strandPerSample =
+    if   (ref, alt) == ('C', 'T') || (ref, alt) == ('T', 'C')
+    then [removeForwardBases bases strands | (bases, strands) <- zip basesPerSample strandPerSample]
+    else
+        if (ref, alt) == ('G', 'A') || (ref, alt) == ('A', 'G')
+        then [removeReverseBases bases strands | (bases, strands) <- zip basesPerSample strandPerSample]
+        else basesPerSample
+  where
+    removeForwardBases = removeReads ForwardStrand
+    removeReverseBases = removeReads ReverseStrand
+
+removeReads :: Strand -> String -> [Strand] -> String
+removeReads strand bases strands = [b | (b, s) <- zip bases strands, s /= strand]

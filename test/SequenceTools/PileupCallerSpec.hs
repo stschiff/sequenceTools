@@ -4,10 +4,11 @@ module SequenceTools.PileupCallerSpec (spec) where
 import SequenceFormats.FreqSum (FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (GenoEntry(..), EigenstratSnpEntry(..))
 import SequenceFormats.Utils (Chrom(..))
+import SequenceFormats.Pileup (Strand(..))
 import SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
     callRandomDiploid, dosageToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
-    TransitionsMode(..), filterTransitions)
+    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples)
 
 import Control.Monad (replicateM, forM_)
 import qualified Data.ByteString.Char8 as B
@@ -28,6 +29,7 @@ spec = do
     testDosageToEigenstratGeno
     testFreqSumToEigenstrat
     testFilterTransitions
+    testCleanSSdamageAllSamples
 
 testCallToDosage :: Spec
 testCallToDosage = describe "callToDosage" $ do
@@ -164,3 +166,22 @@ testFilterTransitions = describe "filterTransitions" $ do
     it "should output all sites with AllSites" $ do
         let r = P.toList $ each mockFreqSumData >-> filterTransitions AllSites
         r `shouldBe` mockFreqSumData
+    it "should output all sites with SingleStrandMode" $ do
+        let r = P.toList $ each mockFreqSumData >-> filterTransitions SingleStrandMode
+        r `shouldBe` mockFreqSumData
+
+testCleanSSdamageAllSamples :: Spec
+testCleanSSdamageAllSamples = describe "cleanSSdamageAllSamples" $ do
+    let bases = ["AACATG", "AACATT", "AACTTG"]
+        strands = [[f, r, r, f, r, r], [r, f, r, f, f, r], [f, f, r, f, f, r]]
+    it "should not remove anything if not C/T or G/A SNP" $
+        cleanSSdamageAllSamples 'C' 'A' bases strands `shouldBe` bases
+    it "should remove forward reads from C/T SNPs" $ do
+        cleanSSdamageAllSamples 'C' 'T' bases strands `shouldBe` ["ACTG", "ACT", "CG"]
+        cleanSSdamageAllSamples 'T' 'C' bases strands `shouldBe` ["ACTG", "ACT", "CG"]
+    it "should remove reverse reads from G/A SNPs" $ do
+        cleanSSdamageAllSamples 'A' 'G' bases strands `shouldBe` ["AA", "AAT", "AATT"]
+        cleanSSdamageAllSamples 'G' 'A' bases strands `shouldBe` ["AA", "AAT", "AATT"]
+  where
+    f = ForwardStrand
+    r = ReverseStrand
