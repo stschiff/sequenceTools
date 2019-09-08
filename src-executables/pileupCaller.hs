@@ -1,169 +1,69 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, NoImplicitPrelude #-}
 
 import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..), 
     EigenstratIndEntry(..), Sex(..), writeEigenstrat)
 import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
 import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
-import Pipes.OrderedZip (orderCheckPipe)
-
 import SequenceTools.Utils (versionInfoOpt, versionInfoText)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
     freqSumToEigenstrat, filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
 
-import Control.Applicative ((<|>))
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
 import qualified Data.ByteString.Char8 as B
 import Data.List.Split (splitOn)
+import qualified Data.Vector.Unboxed.Mutable as V
 import qualified Options.Applicative as OP
 import Pipes (yield, (>->), runEffect, Producer, for)
-import Pipes.OrderedZip (orderedZip)
+import Pipes.OrderedZip (orderedZip, orderCheckPipe)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
+import RIO
+import System.IO (readFile, hPutStrLn, stderr)
 import System.Random (mkStdGen, setStdGen)
+import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data ProgOpt = ProgOpt {
-    optCallingMode :: CallingMode,
-    optKeepInCongruentReads :: Bool,
-    optSeed :: Maybe Int,
-    optMinDepth :: Int,
-    optTransitionsMode :: TransitionsMode,
-    optSnpFile :: FilePath,
-    optOutFormat :: OutFormat,
-    optSampleNames :: Either [String] FilePath
+data OutFormat = EigenstratFormat String String | FreqSumFormat
+
+data ProgOpt = ProgOpt CallingMode Bool (Maybe Int) Int TransitionsMode FilePath OutFormat (Either [String] FilePath)
+    --optCallingMode :: CallingMode,
+    --optKeepInCongruentReads :: Bool,
+    --optSeed :: Maybe Int,
+    --optMinDepth :: Int,
+    --optTransitionsMode :: TransitionsMode,
+    --optSnpFile :: FilePath,
+    --optOutFormat :: OutFormat,
+    --optSampleNames :: Either [String] FilePath
+
+data ReadStats = ReadStats {
+    rsTotalSites :: IORef Int,
+    rsNonMissingSites :: V.IOVector Int,
+    rsRawReads :: V.IOVector Int,
+    rsReadsCleanedSS :: V.IOVector Int,
+    rsReadsCongruent :: V.IOVector Int
 }
 
-data OutFormat = EigenstratFormat String String | FreqSumFormat
-type App = ReaderT ProgOpt (SafeT IO)
+data Env = Env {
+    envCallingMode :: CallingMode,
+    envKeepInCongruentReads :: Bool,
+    envMinDepth :: Int,
+    envTransitionsMode :: TransitionsMode,
+    envOutFormat :: OutFormat,
+    envSnpFile :: FilePath,
+    envSampleNames :: [String],
+    envStats :: ReadStats
+}
+
+type App = ReaderT Env (SafeT IO)
 
 main :: IO ()
-main = OP.execParser parserInfo >>= runSafeT . runReaderT runWithOpts
-  where
-    parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
-        (OP.progDescDoc (Just programHelpDoc))
+main = do
+    args <- OP.execParser parserInfo
+    env <- initialiseEnvironment args
+    runSafeT $ runReaderT runMain env
 
-programHelpDoc :: PP.Doc
-programHelpDoc =
-    part1 PP.<$>
-    PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$>
-    part2
-  where
-    part1 = PP.fillSep . map PP.text . words $
-        "PileupCaller is a simple tool to create genotype calls from bam files. \
-        \You need to convert bam files into the mpileup-format, specified at \
-        \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \
-        \to create a multi-sample mpileup file to be processed with pileupCaller is"
-    samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $
-        "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -f <FASTA_REFERENCE_FILE> \
-        \Sample1.bam Sample2.bam Sample3.bam | pileupCaller ..."
-    part2 = PP.fillSep . map PP.text . words $
-        "Note that flag -B in samtools is very important to reduce reference \
-        \bias in low coverage data. " ++ versionInfoText
-
-
-runWithOpts :: App ()
-runWithOpts = do
-    setRandomSeed
-    let pileupProducer = readPileupFromStdIn
-    snpFile <- asks optSnpFile
-    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
-    outFormat <- asks optOutFormat
-    case outFormat of
-        FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix popName -> outputEigenStrat outPrefix popName freqSumProducer
-
-setRandomSeed :: App ()
-setRandomSeed = do
-    seed <- asks optSeed
-    case seed of
-        Nothing -> return ()
-        Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
-
-pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
-    App (Producer FreqSumEntry (SafeT IO) ())
-pileupToFreqSum snpFileName pileupProducer = do
-    sampleNameSpec <- asks optSampleNames
-    sampleNames <- case sampleNameSpec of
-        Left list -> return list
-        Right fn -> liftIO (lines <$> readFile fn)
-    let snpProdOrderChecked =
-            readEigenstratSnpFile snpFileName >-> orderCheckPipe cmpSnpPos
-        pileupProdOrderChecked =
-            pileupProducer >-> orderCheckPipe cmpPileupPos
-        jointProd =
-            orderedZip cmpSnpToPileupPos snpProdOrderChecked pileupProdOrderChecked
-    mode <- asks optCallingMode
-    keepInCongruentReads <- asks optKeepInCongruentReads
-    transisitionsMode <- asks optTransitionsMode
-    let singleStrandMode = (transisitionsMode == SingleStrandMode)
-    minDepth <- asks optMinDepth
-    let ret = for jointProd $ \jointEntry ->
-            case jointEntry of
-                (Just esEntry, Nothing) -> do
-                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
-                        dosages = (replicate (length sampleNames) Nothing) 
-                    yield $ FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt dosages
-                (Just esEntry, Just pRow) -> do
-                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
-                        (PileupRow _ _ _ rawPileupBasesPerSample rawStrandInfoPerSample) = pRow
-                    let cleanBasesPerSample =
-                            if   singleStrandMode
-                            then cleanSSdamageAllSamples ref alt rawPileupBasesPerSample rawStrandInfoPerSample
-                            else rawPileupBasesPerSample
-                    let congruentBasesPerSample = 
-                            if   keepInCongruentReads
-                            then cleanBasesPerSample
-                            else map (filter (\c -> c == ref || c == alt)) cleanBasesPerSample
-                    calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) congruentBasesPerSample
-                    let genotypes = map (callToDosage ref alt) calls
-                    yield (FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt genotypes)
-                _ -> return ()
-    return (fst <$> ret)
-  where
-    cmpSnpPos :: EigenstratSnpEntry -> EigenstratSnpEntry -> Ordering
-    cmpSnpPos es1 es2 = (snpChrom es1, snpPos es1) `compare` (snpChrom es2, snpPos es2)
-    cmpPileupPos :: PileupRow -> PileupRow -> Ordering
-    cmpPileupPos pr1 pr2 = (pileupChrom pr1, pileupPos pr1) `compare` (pileupChrom pr2, pileupPos pr2)
-    cmpSnpToPileupPos :: EigenstratSnpEntry -> PileupRow -> Ordering
-    cmpSnpToPileupPos es pr = (snpChrom es, snpPos es) `compare` (pileupChrom pr, pileupPos pr)
-
-outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()
-outputFreqSum freqSumProducer = do
-    transitionsOnly <- asks optTransitionsMode
-    sampleNameSpec <- asks optSampleNames
-    callingMode <- asks optCallingMode
-    sampleNames <- case sampleNameSpec of
-        Left list -> return list
-        Right fn -> fmap lines . liftIO $ readFile fn
-    let nrHaplotypes = case callingMode of
-            MajorityCalling _ -> 1 :: Int
-            RandomCalling -> 1
-            RandomDiploidCalling -> 2
-    let header' = FreqSumHeader (map B.pack sampleNames) [nrHaplotypes | _ <- sampleNames]
-        outProd = freqSumProducer >-> filterTransitions transitionsOnly
-    lift . runEffect $ outProd >-> printFreqSumStdOut header'
-
-outputEigenStrat :: FilePath -> String -> Producer FreqSumEntry (SafeT IO) () -> App ()
-outputEigenStrat outPrefix popName freqSumProducer = do
-    transitionsMode <- asks optTransitionsMode
-    sampleNameSpec <- asks optSampleNames
-    callingMode <- asks optCallingMode
-    let diploidizeCall = case callingMode of
-            RandomCalling -> True
-            MajorityCalling _ -> True
-            RandomDiploidCalling -> False
-    sampleNames <- case sampleNameSpec of
-        Left list -> return list
-        Right fn -> lines <$> (liftIO . readFile) fn
-    let snpOut = outPrefix <> "snp.txt"
-        indOut = outPrefix <> "ind.txt"
-        genoOut = outPrefix <> "geno.txt"
-    let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
-    lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
-                P.map (freqSumToEigenstrat diploidizeCall) >->
-                writeEigenstrat genoOut snpOut indOut indEntries
+parserInfo :: OP.ParserInfo ProgOpt
+parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
+    (OP.progDescDoc (Just programHelpDoc))
 
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parseSeed <*> parseMinDepth <*>
@@ -248,3 +148,161 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         OP.help "specify the population name of the samples, which is included\
         \ in the output *.ind.txt file in Eigenstrat output. This will be ignored if the output \
         \format is not Eigenstrat")
+
+programHelpDoc :: PP.Doc
+programHelpDoc =
+    part1 PP.<$>
+    PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$>
+    part2
+  where
+    part1 = PP.fillSep . map PP.text . words $
+        "PileupCaller is a simple tool to create genotype calls from bam files. \
+        \You need to convert bam files into the mpileup-format, specified at \
+        \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \
+        \to create a multi-sample mpileup file to be processed with pileupCaller is"
+    samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $
+        "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -f <FASTA_REFERENCE_FILE> \
+        \Sample1.bam Sample2.bam Sample3.bam | pileupCaller ..."
+    part2 = PP.fillSep . map PP.text . words $
+        "Note that flag -B in samtools is very important to reduce reference \
+        \bias in low coverage data. " ++ versionInfoText
+
+initialiseEnvironment :: ProgOpt -> IO Env
+initialiseEnvironment args = do
+    let (ProgOpt callingMode keepInCongruentReads seed minDepth
+            transitionsMode snpFile outFormat sampleNames) = args
+    case seed of
+        Nothing -> return ()
+        Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
+    sampleNamesList <- case sampleNames of
+        Left list -> return list
+        Right fn -> lines <$> readFile fn
+    let n = length sampleNamesList
+    readStats <- ReadStats <$> newIORef 0 <*> makeVec n <*> makeVec n <*> makeVec n <*> makeVec n
+    return $ Env callingMode keepInCongruentReads minDepth transitionsMode
+        outFormat snpFile sampleNamesList readStats
+  where
+    makeVec n = do
+        v <- V.new n 
+        V.set v 0
+        return v
+
+runMain :: App ()
+runMain = do
+    let pileupProducer = readPileupFromStdIn
+    snpFile <- asks envSnpFile
+    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
+    outFormat <- asks envOutFormat
+    case outFormat of
+        FreqSumFormat -> outputFreqSum freqSumProducer
+        EigenstratFormat outPrefix popName -> outputEigenStrat outPrefix popName freqSumProducer
+    outputStats
+
+pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
+    App (Producer FreqSumEntry (SafeT IO) ())
+pileupToFreqSum snpFileName pileupProducer = do
+    nrSamples <- length <$> asks envSampleNames
+    let snpProdOrderChecked =
+            readEigenstratSnpFile snpFileName >-> orderCheckPipe cmpSnpPos
+        pileupProdOrderChecked =
+            pileupProducer >-> orderCheckPipe cmpPileupPos
+        jointProd =
+            orderedZip cmpSnpToPileupPos snpProdOrderChecked pileupProdOrderChecked
+    mode <- asks envCallingMode
+    keepInCongruentReads <- asks envKeepInCongruentReads
+    transisitionsMode <- asks envTransitionsMode
+    let singleStrandMode = (transisitionsMode == SingleStrandMode)
+    minDepth <- asks envMinDepth
+    readStats <- asks envStats
+    let ret = Pipes.for jointProd $ \jointEntry ->
+            case jointEntry of
+                (Just esEntry, Nothing) -> do
+                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
+                        dosages = (replicate nrSamples Nothing) 
+                    liftIO $ addOneSite readStats
+                    yield $ FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt dosages
+                (Just esEntry, Just pRow) -> do
+                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
+                        (PileupRow _ _ _ rawPileupBasesPerSample rawStrandInfoPerSample) = pRow
+                    let cleanBasesPerSample =
+                            if   singleStrandMode
+                            then cleanSSdamageAllSamples ref alt rawPileupBasesPerSample rawStrandInfoPerSample
+                            else rawPileupBasesPerSample
+                    let congruentBasesPerSample = 
+                            if   keepInCongruentReads
+                            then cleanBasesPerSample
+                            else map (filter (\c -> c == ref || c == alt)) cleanBasesPerSample
+                    liftIO $ addOneSite readStats
+                    liftIO $ updateStatsAllSamples readStats (map length rawPileupBasesPerSample)
+                        (map length cleanBasesPerSample) (map length congruentBasesPerSample)
+                    calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) congruentBasesPerSample
+                    let genotypes = map (callToDosage ref alt) calls
+                    yield (FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt genotypes)
+                _ -> return ()
+    return (fst <$> ret)
+  where
+    cmpSnpPos :: EigenstratSnpEntry -> EigenstratSnpEntry -> Ordering
+    cmpSnpPos es1 es2 = (snpChrom es1, snpPos es1) `compare` (snpChrom es2, snpPos es2)
+    cmpPileupPos :: PileupRow -> PileupRow -> Ordering
+    cmpPileupPos pr1 pr2 = (pileupChrom pr1, pileupPos pr1) `compare` (pileupChrom pr2, pileupPos pr2)
+    cmpSnpToPileupPos :: EigenstratSnpEntry -> PileupRow -> Ordering
+    cmpSnpToPileupPos es pr = (snpChrom es, snpPos es) `compare` (pileupChrom pr, pileupPos pr)
+
+addOneSite :: ReadStats -> IO ()
+addOneSite readStats = modifyIORef' (rsTotalSites readStats) (+1)
+
+updateStatsAllSamples :: ReadStats -> [Int] -> [Int] -> [Int] -> IO ()
+updateStatsAllSamples readStats rawBaseCounts damageCleanedBaseCounts congruencyCleanedBaseCounts = do
+    sequence_ [V.modify (rsRawReads readStats) (+n) i | (i, n) <- zip [0..] rawBaseCounts]
+    sequence_ [V.modify (rsReadsCleanedSS readStats) (+n) i | (i, n) <- zip [0..] damageCleanedBaseCounts]
+    sequence_ [V.modify (rsReadsCongruent readStats) (+n) i | (i, n) <- zip [0..] congruencyCleanedBaseCounts]
+    let nonMissingSites = [if n > 0 then 1 else 0 | n <- congruencyCleanedBaseCounts]
+    sequence_ [V.modify (rsNonMissingSites readStats) (+n) i | (i, n) <- zip [0..] nonMissingSites]
+
+outputFreqSum :: Producer FreqSumEntry (SafeT IO) () -> App ()
+outputFreqSum freqSumProducer = do
+    transitionsOnly <- asks envTransitionsMode
+    callingMode <- asks envCallingMode
+    sampleNames <- asks envSampleNames
+    let nrHaplotypes = case callingMode of
+            MajorityCalling _ -> 1 :: Int
+            RandomCalling -> 1
+            RandomDiploidCalling -> 2
+    let header' = FreqSumHeader (map B.pack sampleNames) [nrHaplotypes | _ <- sampleNames]
+        outProd = freqSumProducer >-> filterTransitions transitionsOnly
+    lift . runEffect $ outProd >-> printFreqSumStdOut header'
+
+outputEigenStrat :: FilePath -> String -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputEigenStrat outPrefix popName freqSumProducer = do
+    transitionsMode <- asks envTransitionsMode
+    sampleNames <- asks envSampleNames
+    callingMode <- asks envCallingMode
+    let diploidizeCall = case callingMode of
+            RandomCalling -> True
+            MajorityCalling _ -> True
+            RandomDiploidCalling -> False
+    let snpOut = outPrefix <> "snp.txt"
+        indOut = outPrefix <> "ind.txt"
+        genoOut = outPrefix <> "geno.txt"
+    let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
+    lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
+                P.map (freqSumToEigenstrat diploidizeCall) >->
+                writeEigenstrat genoOut snpOut indOut indEntries
+
+outputStats :: App ()
+outputStats = do
+    ReadStats totalSites nonMissingSitesVec rawReadsVec damageCleanedReadsVec congruentReadsVec <- asks envStats
+    sampleNames <- asks envSampleNames
+    liftIO $ hPutStrLn stderr
+        "SampleName\tTotalSites\tNonMissingSites\tavgRawReads\tavgDamageCleanedReads\tavgSampledFrom"
+    forM_ (zip [0..] sampleNames) $ \(i, name) -> do
+        totalS <- readIORef totalSites
+        nonMissingSites <- V.read nonMissingSitesVec i
+        rawReads <- V.read rawReadsVec i
+        damageCleanedReads <- V.read damageCleanedReadsVec i
+        congruentReads <- V.read congruentReadsVec i
+        let avgRawReads = (fromIntegral rawReads / fromIntegral totalS) :: Double
+            avgDamageCleanedReads = (fromIntegral damageCleanedReads / fromIntegral totalS) :: Double
+            avgCongruentReads = (fromIntegral congruentReads / fromIntegral totalS) :: Double
+        liftIO . hPutStrLn stderr $ printf "%s\t%d\t%d\t%g\t%g\t%g" name totalS nonMissingSites
+            avgRawReads avgDamageCleanedReads avgCongruentReads
