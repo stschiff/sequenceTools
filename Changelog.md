@@ -9,3 +9,5 @@ V 1.3.1: Bumped dependency on sequence-formats to new sequence-formats-1.4.0, wh
          rsIds in freqSum to output the correct rsId, and an option to parse chromosomes X, Y and MT.
 
 V 1.4.0: Added single strand mode, and new triallelic treatment.
+
+V 1.4.0.1: Improved README, fixed output bug in genoStats.hs
