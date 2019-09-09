@@ -294,7 +294,14 @@ outputStats = do
     ReadStats totalSites nonMissingSitesVec rawReadsVec damageCleanedReadsVec congruentReadsVec <- asks envStats
     sampleNames <- asks envSampleNames
     liftIO $ hPutStrLn stderr
-        "SampleName\tTotalSites\tNonMissingSites\tavgRawReads\tavgDamageCleanedReads\tavgSampledFrom"
+        "# Summary Statistics per sample \n\
+        \# SampleName: Name of the sample as given by the user \n\
+        \# TotalSites: Total number of sites in the given Snp file (before transition filtering) \n\
+        \# NonMissingCalls: Total number of sites output with a non-Missing call (before transition filtering) \n\
+        \# avgRawReads: mean coverage of raw pileup input data across total sites (incl. missing sites) \n\
+        \# avgDamageCleanedReads: mean coverage of pileup after single-stranded damage removal \n\
+        \# avgSampledFrom: mean coverage of pileup after removing reads with tri-allelic alleles \n\
+        \SampleName\tTotalSites\tNonMissingCalls\tavgRawReads\tavgDamageCleanedReads\tavgSampledFrom"
     forM_ (zip [0..] sampleNames) $ \(i, name) -> do
         totalS <- readIORef totalSites
         nonMissingSites <- V.read nonMissingSitesVec i
