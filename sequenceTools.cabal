@@ -1,5 +1,7 @@
 name:                sequenceTools
 version:             1.4.0.1
+synopsis:            A package with tools for processing next generation sequencing data, in particular for processing data from ancient DNA sequencing libraries.
+description:         Key tool in this package is pileupCaller, a tool to randomly sample genotypes from sequencing data.
 license:             GPL-3
 license-file:        LICENSE
 author:              Stephan Schiffels
@@ -7,6 +9,8 @@ maintainer:          stephan.schiffels@mac.com
 category:            Bioinformatics
 build-type:          Simple
 cabal-version:       >=1.10
+extra-source-files:  README.md,
+                     Changelog.md
 
 library
     exposed-modules:    SequenceTools.Utils,
