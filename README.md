@@ -4,7 +4,15 @@
 
 (bioconda package available thanks to [apeltzer](https://github.com/apeltzer)!)
 
-This repository contains some programs that I use for processing sequencing data. To install, download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>) and run "stack install". If you don't have the Haskell compiler installed, it will tell you to run "stack setup". Please do so. The stack installations won't interfere with a system-wide installation. If everything goes as planned, you should end up having the executables defined in this package under ~/.local/bin.
+This repository contains some programs that I use for processing sequencing data.
+
+# Installation
+
+1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
+2. Clone the repository using `git clone https://github.com/stschiff/sequenceTools.git; cd sequenceTools`.
+3. Run "stack install". If everything goes as planned, you should end up having the executables defined in this package under ~/.local/bin.
+4. Add `~/.local/bin` to your PATH, for example by adding to your `~/.profile` or `~/.bash_profile` the line `PATH=$PATH:$HOME/.local/bin`. Run `source ~/.profile` or `source ~/.bash_profile`, respectively, to update your path.
+5. Run `pileupCaller --version`. It should output `1.4.0`. You're all set.
 
 ## pileupCaller
 
