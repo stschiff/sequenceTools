@@ -19,6 +19,7 @@ import Pipes.Group (groupsBy, folds)
 import Pipes.Safe (MonadSafe, runSafeT)
 import qualified Pipes.Prelude as P
 import System.IO (hPutStrLn, stderr)
+import Text.Printf (printf)
 
 data ProgOpt = ProgOpt InputOption
 
@@ -137,7 +138,7 @@ printReports names (chrom, reports) =
     forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) -> do
         let total = mis + ref + alt + het
             misPerc = round $ (fromIntegral mis / fromIntegral total) * (100.0 :: Double) :: Int
-        liftIO . putStrLn $ unChrom chrom <> show n <> show mis <> show misPerc <> show ref <> show alt <> show het
+        liftIO . putStrLn $ printf "%s\t%s\t%d(%d%%)\t%d\t%d\t%d" (unChrom chrom) n mis misPerc ref alt het
 
 accumulateAllChromStats :: [String] ->
     Fold (Chrom, StatsReportAllSamples) (Chrom, StatsReportAllSamples)
