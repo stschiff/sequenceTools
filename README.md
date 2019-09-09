@@ -53,3 +53,11 @@ There is however an issue here: If you have aligned your read data to a version 
     pileupCaller --sampleNames Sample1,Sample2,Sample3 \
         --samplePopName MyPop -f <Eigenstrat.snp> \
         -o EigenStrat -e <My_output_prefix>
+
+## vcf2eigenstrat
+
+Simple tool to convert a VCF file to an Eigenstrat file. Pretty self-explanatory. Please run `vcf2eigenstrat --help` to output some documentation.
+
+## genoStats
+
+A simple tool to get some per-individual statistics from an Eigenstrat or Freqsum-file. Run `genoStats --help` for documentation.
