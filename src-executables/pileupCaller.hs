@@ -78,12 +78,14 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         OP.help "Sample two reads at random (without replacement) at each site and represent the \
         \individual by a diploid genotype constructed from those two random \
         \picks. This will always assign missing data to positions where only \
-        \one read is present, even if minDepth=1.")
+        \one read is present, even if minDepth=1. The main use case for this \
+        \option is for estimating mean heterozygosity across sites.")
     parseMajorityCalling = MajorityCalling <$> (parseMajorityCallingFlag *> parseDownsamplingFlag)
     parseMajorityCallingFlag = OP.flag' True (OP.long "majorityCall" <> OP.help
         "Pick the allele supported by the \
         \most reads at a site. If an equal numbers of alleles fulfil this, pick one at \
-        \random. This results in a haploid call.")
+        \random. This results in a haploid call. See --downSampling for best practices \
+        \for calling rare variants")
     parseDownsamplingFlag = OP.switch (OP.long "downSampling" <> OP.help "When this switch is given, \
         \the MajorityCalling mode will downsample \
         \from the total number of reads a number of reads \
@@ -91,17 +93,15 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         \reference bias in the MajorityCalling model, which increases with higher coverage. \
         \The recommendation for rare-allele calling is --majorityCall --downsampling --minDepth 3")
     parseKeepIncongruentReads = OP.switch (OP.long "keepIncongruentReads" <> OP.help "By default, \
-        \pileupCaller removes reads with alleles that are neither of the two alleles specified in the SNP file. \
-        \Any sampling (depending on the calling mode) is therefore by default constrained to reads \
-        \supporting the reference an alternative allele, and any other alleles (for example at triallelic sites or \
-        \due to damage) are removed. With this flag given, sampling is performed unconstrained on all reads. If \
-        \a read is sampled with an allele that is neither of the two given alleles, a missing genotype is generated. \
-        \IMPORTANT NOTE: The default behaviour has changed in pileupCaller. If you want to emulate the previous \
+        \pileupCaller now removes reads with tri-allelic alleles that are neither of the two alleles specified in the SNP file. \
+        \To keep those reads for sampling, set this flag. With this option given, if \
+        \the sampled read has a tri-allelic allele that is neither of the two given alleles in the SNP file, a missing genotype is generated. \
+        \IMPORTANT NOTE: The default behaviour has changed in pileupCaller version 1.4.0. If you want to emulate the previous \
         \behaviour, use this flag. I recommend now to NOT set this flag and use the new behaviour.")
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <>
         OP.value Nothing <> OP.metavar "<RANDOM_SEED>" <>
         OP.help "random seed used for the random number generator. If not given, use \
-        \system clock to seed the random number generator")
+        \system clock to seed the random number generator.")
     parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <>
         OP.value 1 <> OP.showDefault <> OP.metavar "<DEPTH>" <>
         OP.help "specify the minimum depth for a call. For sites with fewer \
@@ -114,7 +114,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
     parseSingleStrandMode = OP.flag' SingleStrandMode (OP.long "singleStrandMode" <>
         OP.help "At C/T polymorphisms, ignore reads aligning to the forward strand. \
         \At G/A polymorphisms, ignore reads aligning to the reverse strand. This should \
-        \remove ancient-DNA damage in ancient DNA libraries prepared with the single-stranded protocoll.")
+        \remove post-mortem damage in ancient DNA libraries prepared with the non-UDG single-stranded protocol.")
     parseSnpFile = OP.strOption (OP.long "snpFile" <> OP.short 'f' <>
         OP.metavar "<FILE>" <> OP.help "an Eigenstrat-formatted SNP list file for \
         \the positions and alleles to call. All \
@@ -128,14 +128,18 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         \ordered by chromosome and position, and this is checked. The chromosome order in humans is 1-22,X,Y,MT. \
         \Chromosome can generally begin with \"chr\". In case of non-human data with different chromosome \
         \names, you should convert all names to numbers. They will always considered to \
-        \be numerically ordered, even beyond 22.")
+        \be numerically ordered, even beyond 22. Finally, I note that for internally, \
+        \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
+        \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
+        \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
         \SNP and IND file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt \
-        \If not set, output will be FreqSum (Default). Note that freqSum format, described at\
-        \... is useful for testing your pipeline, since it's output to standard out")
+        \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
+        \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
+        \is useful for testing your pipeline, since it's output to standard out")
     parseSampleNames = parseSampleNameList <|> parseSampleNameFile
     parseSampleNameList = OP.option (Left . splitOn "," <$> OP.str)
         (OP.long "sampleNames" <> OP.metavar "NAME1,NAME2,..." <>
@@ -153,19 +157,21 @@ programHelpDoc :: PP.Doc
 programHelpDoc =
     part1 PP.<$>
     PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$>
-    part2
+    part2 PP.<$> PP.line PP.<$>
+    PP.string versionInfoText
   where
     part1 = PP.fillSep . map PP.text . words $
-        "PileupCaller is a simple tool to create genotype calls from bam files. \
-        \You need to convert bam files into the mpileup-format, specified at \
+        "PileupCaller is a tool to create genotype calls from bam files using read-sampling methods. \
+        \To use this tool, you need to convert bam files into the mpileup-format, specified at \
         \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \
         \to create a multi-sample mpileup file to be processed with pileupCaller is"
     samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $
-        "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -f <FASTA_REFERENCE_FILE> \
+        "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -R -f <FASTA_REFERENCE_FILE> \
         \Sample1.bam Sample2.bam Sample3.bam | pileupCaller ..."
     part2 = PP.fillSep . map PP.text . words $
-        "Note that flag -B in samtools is very important to reduce reference \
-        \bias in low coverage data. " ++ versionInfoText
+        "You can lookup what these options do in the samtools documentation. \
+        \Note that flag -B in samtools is very important to reduce reference \
+        \bias in low coverage data."
 
 initialiseEnvironment :: ProgOpt -> IO Env
 initialiseEnvironment args = do
