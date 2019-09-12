@@ -6,13 +6,12 @@
 
 This repository contains some programs that I use for processing sequencing data.
 
-# Installation
+# Simple Installation of the main tools
 
 1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
-2. Clone the repository using `git clone https://github.com/stschiff/sequenceTools.git; cd sequenceTools`.
-3. Run `stack install` inside the sequenceTools directory. If everything goes as planned, you should end up having the executables defined in this package under `~/.local/bin`.
-4. Add `~/.local/bin` to your PATH, for example by adding to your `~/.profile` or `~/.bash_profile` the line `PATH=$PATH:$HOME/.local/bin`. Run `source ~/.profile` or `source ~/.bash_profile`, respectively, to update your path.
-5. Run `pileupCaller --version`. It should output `1.4.0`. You're all set.
+2. Run `stack install sequenceTools --resolver nightly`. You should now have the executables from this package under `~/.local/bin`.
+3. Add `~/.local/bin` to your PATH, for example by adding to your `~/.profile` or `~/.bash_profile` the line `PATH=$PATH:$HOME/.local/bin`. Run `source ~/.profile` or `source ~/.bash_profile`, respectively, to update your path.
+4. Run `pileupCaller --version`. It should output `1.4.0`. You're all set.
 
 ## pileupCaller
 
