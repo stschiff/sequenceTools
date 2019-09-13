@@ -1,17 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, dosageToEigenstratGeno, freqSumToEigenstrat, CallingMode(..),
+    callRandomDiploid, CallingMode(..),
     TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples) where
 
-import SequenceFormats.Utils (Chrom(..))
 import SequenceFormats.FreqSum (FreqSumEntry(..))
-import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), GenoEntry(..), GenoLine)
 import SequenceFormats.Pileup (Strand(..))
 import SequenceTools.Utils (sampleWithoutReplacement)
 
-import qualified Data.ByteString.Char8 as B
 import Data.List (sortOn, group, sort)
-import Data.Vector (fromList)
 import Pipes (Pipe, cat)
 import qualified Pipes.Prelude as P
 
@@ -89,42 +86,15 @@ callRandomDiploid alleles = do
         Just [a1, a2] -> return $ DiploidCall a1 a2
         _ -> error "should not happen"
 
--- |convert a freqSum entry to an eigenstrat SNP entry
-freqSumToEigenstrat :: Bool -> FreqSumEntry -> (EigenstratSnpEntry, GenoLine)
-freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos maybeSnpId ref alt calls) =
-    let snpId_ = case maybeSnpId of 
-            Just id_ -> B.pack id_
-            Nothing -> B.pack $ c <> "_" <> show pos
-        snpEntry = EigenstratSnpEntry chrom pos 0.0 snpId_ ref alt
-        geno = fromList . map (dosageToEigenstratGeno diploidizeCall) $ calls
-    in  (snpEntry, geno)
-
--- |convert a Dosage to an eigenstrat-encoded genotype
-dosageToEigenstratGeno :: Bool -> Maybe Int -> GenoEntry
-dosageToEigenstratGeno diploidizeCall c =
-    if diploidizeCall then
-        case c of
-            Just 0 -> HomRef
-            Just 1 -> HomAlt
-            Nothing -> Missing
-            _ -> error "illegal call for pseudo-haploid Calling method"
-    else
-        case c of
-            Just 0 -> HomRef
-            Just 1 -> Het
-            Just 2 -> HomAlt
-            Nothing -> Missing
-            _ -> error ("unknown genotype " ++ show c)
-
 filterTransitions :: (Monad m) => TransitionsMode -> Pipe FreqSumEntry FreqSumEntry m ()
 filterTransitions transversionsMode =
     case transversionsMode of
         SkipTransitions ->
-            P.filter (\(FreqSumEntry _ _ _ ref alt _) -> isTransversion ref alt)
+            P.filter (\(FreqSumEntry _ _ _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
-            P.map (\(FreqSumEntry chrom pos id_ ref alt calls) ->
+            P.map (\(FreqSumEntry chrom pos id_ gpos ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
-                in  FreqSumEntry chrom pos id_ ref alt calls')
+                in  FreqSumEntry chrom pos id_ gpos ref alt calls')
         _ -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt

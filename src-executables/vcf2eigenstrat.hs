@@ -3,12 +3,11 @@
 import Pipes.OrderedZip (orderedZip)
 import SequenceFormats.VCF (readVCFfromStdIn, VCFheader(..), VCFentry(..),
                      isBiallelicSnp, getDosages, vcfToFreqSumEntry)
-import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat, 
-    GenoLine, GenoEntry(..), Sex(..), EigenstratIndEntry(..))
+import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat,
+    Sex(..), EigenstratIndEntry(..))
 import SequenceFormats.FreqSum (FreqSumEntry(..), freqSumEntryToText)
-import SequenceFormats.Utils (Chrom(..))
 
-import SequenceTools.Utils (versionInfoText, versionInfoOpt)
+import SequenceTools.Utils (versionInfoText, versionInfoOpt, freqSumToEigenstrat)
 
 import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (when)
@@ -16,7 +15,6 @@ import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.ByteString.Char8 as B
 import Data.Monoid ((<>))
 -- import Debug.Trace (trace)
-import Data.Vector (fromList)
 import qualified Options.Applicative as OP
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
 import qualified Pipes.Prelude as P
@@ -65,7 +63,7 @@ runMain (ProgOpt maybeSnpPosFile outPrefix) =
                 Just snpPosFile ->
                     return $ runJointly vcfBodyBiAllelic nrInds snpPosFile
                 Nothing -> return $ runSimple vcfBodyBiAllelic
-        runEffect $ vcfProducer >-> eigenStratPipe >-> writeEigenstrat genoOut snpOut indOut indEntries
+        runEffect $ vcfProducer >-> P.map (freqSumToEigenstrat False) >-> writeEigenstrat genoOut snpOut indOut indEntries
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> FilePath -> Producer FreqSumEntry m r
 runJointly vcfBody nrInds snpPosFile =
@@ -78,10 +76,10 @@ runJointly vcfBody nrInds snpPosFile =
 processVcfWithSnpFile :: (MonadIO m) => Int -> Pipe (Maybe EigenstratSnpEntry, Maybe VCFentry) FreqSumEntry m r
 processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
     case jointEntry of
-        (Just (EigenstratSnpEntry snpChrom' snpPos' _ snpId' snpRef' snpAlt'), Nothing) -> do
+        (Just (EigenstratSnpEntry snpChrom' snpPos' gpos snpId' snpRef' snpAlt'), Nothing) -> do
             let dosages = replicate nrInds Nothing
-            yield $ FreqSumEntry snpChrom' snpPos' (Just . B.unpack $ snpId') snpRef' snpAlt' dosages
-        (Just (EigenstratSnpEntry snpChrom' snpPos' _ snpId' snpRef' snpAlt'), Just vcfEntry) -> do
+            yield $ FreqSumEntry snpChrom' snpPos' (Just snpId') (Just gpos) snpRef' snpAlt' dosages
+        (Just (EigenstratSnpEntry snpChrom' snpPos' gpos snpId' snpRef' snpAlt'), Just vcfEntry) -> do
             dosages <- case getDosages vcfEntry of
                 Right dos -> return dos
                 Left err -> liftIO . throwIO $ AssertionFailed err
@@ -95,7 +93,7 @@ processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
                                      then map flipDosages dosages
                                      else replicate nrInds Nothing
                         _ -> replicate nrInds Nothing
-            yield $ FreqSumEntry snpChrom' snpPos' (Just . B.unpack $ snpId') snpRef' snpAlt' normalizedDosages
+            yield $ FreqSumEntry snpChrom' snpPos' (Just snpId') (Just gpos) snpRef' snpAlt' normalizedDosages
         _ -> return ()
   where
     flipDosages dos = case dos of
@@ -111,20 +109,3 @@ runSimple vcfBody = for vcfBody $ \e -> do
             liftIO . B.putStr . freqSumEntryToText $ e'
             yield e'
         Left err -> (liftIO . throwIO) (AssertionFailed err)
-
-eigenStratPipe :: (MonadIO m) => Pipe FreqSumEntry (EigenstratSnpEntry, GenoLine) m r
-eigenStratPipe = P.map vcfToEigenstrat
-  where
-    vcfToEigenstrat (FreqSumEntry chrom pos maybeSnpId ref alt dosages) =
-        let snpId' = case maybeSnpId of
-                Just i -> B.pack i
-                Nothing -> B.pack (unChrom chrom <> "_" <> show pos)
-            snpEntry = EigenstratSnpEntry chrom pos 0.0 snpId' ref alt
-            genoLine = fromList [dosageToCall d | d <- dosages]
-        in  (snpEntry, genoLine)
-    dosageToCall d = case d of
-        Just 0 -> HomRef
-        Just 1 -> Het
-        Just 2 -> HomAlt
-        Nothing -> Missing
-        _ -> error ("unknown dosage " ++ show d)

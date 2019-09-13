@@ -10,7 +10,6 @@ import Control.Applicative ((<|>))
 import Control.Foldl (purely, Fold(..))
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import qualified Data.ByteString.Char8 as B
 import qualified Data.Vector as V
 import Lens.Family2 (view)
 import qualified Options.Applicative as OP
@@ -80,7 +79,7 @@ runWithFreqSum fsFile = do
     (FreqSumHeader names nrHaps, fsProd) <- case fsFile of
         Nothing -> readFreqSumStdIn
         Just fn -> readFreqSumFile fn
-    let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ _ counts) -> do
+    let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ _ _ counts) -> do
             let genotypes = V.fromList $ do
                     (count', nrHap) <- zip counts nrHaps
                     case count' of
@@ -90,7 +89,7 @@ runWithFreqSum fsFile = do
                         Nothing -> return Missing
                         _ -> error "should not happen"
             yield $ InputEntry chrom genotypes
-    return (map B.unpack names, prod)
+    return (names, prod)
 
 runWithEigenstrat :: (MonadSafe m) =>
     FilePath -> FilePath -> FilePath -> m ([String], Producer InputEntry m ())
@@ -138,7 +137,7 @@ printReports names (chrom, reports) =
     forM_ (zip names reports) $ \(n, StatsReport mis ref alt het) -> do
         let total = mis + ref + alt + het
             misPerc = round $ (fromIntegral mis / fromIntegral total) * (100.0 :: Double) :: Int
-        liftIO . putStrLn $ printf "%s\t%s\t%d(%d%%)\t%d\t%d\t%d" (unChrom chrom) n mis misPerc ref alt het
+        liftIO . putStrLn $ printf "%s\t%s\t%d(%d%%)\t%d\t%d\t%d" (show chrom) n mis misPerc ref alt het
 
 accumulateAllChromStats :: [String] ->
     Fold (Chrom, StatsReportAllSamples) (Chrom, StatsReportAllSamples)

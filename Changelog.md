@@ -11,3 +11,5 @@ V 1.3.1: Bumped dependency on sequence-formats to new sequence-formats-1.4.0, wh
 V 1.4.0: Added single strand mode, and new triallelic treatment.
 
 V 1.4.0.1: Improved README, fixed output bug in genoStats.hs
+
+V 1.4.0.3: Updated to new sequence-formats version, now including reading of genetic position from eigenstrat files.

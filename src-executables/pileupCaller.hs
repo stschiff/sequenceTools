@@ -4,11 +4,10 @@ import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..)
     EigenstratIndEntry(..), Sex(..), writeEigenstrat)
 import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
 import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
-import SequenceTools.Utils (versionInfoOpt, versionInfoText)
+import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
-    freqSumToEigenstrat, filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
+    filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
 
-import qualified Data.ByteString.Char8 as B
 import Data.List.Split (splitOn)
 import qualified Data.Vector.Unboxed.Mutable as V
 import qualified Options.Applicative as OP
@@ -223,12 +222,12 @@ pileupToFreqSum snpFileName pileupProducer = do
     let ret = Pipes.for jointProd $ \jointEntry ->
             case jointEntry of
                 (Just esEntry, Nothing) -> do
-                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
+                    let (EigenstratSnpEntry chr pos gpos id_ ref alt) = esEntry
                         dosages = (replicate nrSamples Nothing) 
                     liftIO $ addOneSite readStats
-                    yield $ FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt dosages
+                    yield $ FreqSumEntry chr pos (Just id_) (Just gpos) ref alt dosages
                 (Just esEntry, Just pRow) -> do
-                    let (EigenstratSnpEntry chr pos _ id_ ref alt) = esEntry
+                    let (EigenstratSnpEntry chr pos gpos id_ ref alt) = esEntry
                         (PileupRow _ _ _ rawPileupBasesPerSample rawStrandInfoPerSample) = pRow
                     let cleanBasesPerSample =
                             if   singleStrandMode
@@ -243,7 +242,7 @@ pileupToFreqSum snpFileName pileupProducer = do
                         (map length cleanBasesPerSample) (map length congruentBasesPerSample)
                     calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) congruentBasesPerSample
                     let genotypes = map (callToDosage ref alt) calls
-                    yield (FreqSumEntry chr pos (Just . B.unpack $ id_) ref alt genotypes)
+                    yield (FreqSumEntry chr pos (Just id_) (Just gpos) ref alt genotypes)
                 _ -> return ()
     return (fst <$> ret)
   where
@@ -274,7 +273,7 @@ outputFreqSum freqSumProducer = do
             MajorityCalling _ -> 1 :: Int
             RandomCalling -> 1
             RandomDiploidCalling -> 2
-    let header' = FreqSumHeader (map B.pack sampleNames) [nrHaplotypes | _ <- sampleNames]
+    let header' = FreqSumHeader sampleNames [nrHaplotypes | _ <- sampleNames]
         outProd = freqSumProducer >-> filterTransitions transitionsOnly
     lift . runEffect $ outProd >-> printFreqSumStdOut header'
 
