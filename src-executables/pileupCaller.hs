@@ -286,9 +286,9 @@ outputEigenStrat outPrefix popName freqSumProducer = do
             RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
-    let snpOut = outPrefix <> "snp.txt"
-        indOut = outPrefix <> "ind.txt"
-        genoOut = outPrefix <> "geno.txt"
+    let snpOut = outPrefix <> ".snp.txt"
+        indOut = outPrefix <> ".ind.txt"
+        genoOut = outPrefix <> ".geno.txt"
     let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
     lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
                 P.map (freqSumToEigenstrat diploidizeCall) >->
