@@ -1,6 +1,5 @@
 #!/usr/bin/env stack
--- stack runghc --package turtle
-
+-- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Applicative (optional)
@@ -20,18 +19,19 @@ main = do
     args <- options "Admixtools qpDstat wrapper" parser
     runManaged $ do
         paramFile <- mktempfile "." "qpDstat_wrapper"
-        let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
-                      return (format ("snpname:\t"%fp) (optSnp args)) <|>
-                      return (format ("indivname:\t"%fp) (optInd args)) <|>
-                      return (format ("popfilename:\t"%fp) (optPopList args))
-        output paramFile content
+        let content = [(format ("genotypename:\t"%fp) (optGeno args)), 
+                       (format ("snpname:\t"%fp) (optSnp args)), 
+                       (format ("indivname:\t"%fp) (optInd args)), 
+                       (format ("popfilename:\t"%fp) (optPopList args))]
+        output paramFile . select . map unsafeTextToLine $ content
         let execParams = ["-p", format fp paramFile] ++
                          maybe [] (\low -> ["-l", format d low]) (optLow args) ++
                          maybe [] (\high -> ["-h", format d high]) (optHigh args)
         ec <- proc "qpDstat" execParams empty
         case ec of
             ExitSuccess -> return ()
-            ExitFailure n -> err $ format ("qpDstat failed with exit code "%d) n
+            ExitFailure n -> err . unsafeTextToLine $
+                format ("qpDstat failed with exit code "%d) n
 
 parser :: Parser Options
 parser = Options <$> optPath "geno" 'g' "Genotype File"
