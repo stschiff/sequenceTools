@@ -60,3 +60,12 @@ Simple tool to convert a VCF file to an Eigenstrat file. Pretty self-explanatory
 ## genoStats
 
 A simple tool to get some per-individual statistics from an Eigenstrat or Freqsum-file. Run `genoStats --help` for documentation.
+
+## Scripts
+This package also contains several haskell wrapper scripts for the following [ADMIXTOOLS and EIGENSOFT](https://reich.hms.harvard.edu/software) commands: convertf, mergeit, qp3Pop, qpDstat and smartPCA. The original tools require parameter files as input, which I find tedious to use in bioinformatics pipelines. I wrote those wrapper scripts to be able to start the tools with a simple command line option interface.
+
+If you have `stack` installed your system (see above), you should be able to run those scripts on your machine without any difficult setup. Simply clone this repository, navigate to the `scripts` subfolder and invoke any script using standard bash execution, for example
+
+    ./convertf_wrapper.hs
+
+If you start this the first time it may take a while, since `stack` downloads all dependencies and even the script interpreter for you, but after that it should start instantanious. If you want to use the scripts from your path, I suggest to put symbolic links into any folder that is already on your path (for example `~/.local/bin`).
