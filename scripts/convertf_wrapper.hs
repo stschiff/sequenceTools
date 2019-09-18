@@ -1,6 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle
-
+-- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Applicative (optional)
@@ -23,21 +22,20 @@ main = do
     runManaged $ do
         paramFile <- mktempfile "." "convert_wrapper"
         let popListRow = case optPoplist args of
-                Just popList -> return (format ("poplistname:\t"%fp) popList)
+                Just popList -> return . unsafeTextToLine $ format ("poplistname:\t"%fp) popList
                 Nothing -> empty
-        let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
-                      return (format ("snpname:\t"%fp) (optSnp args)) <|>
-                      return (format ("indivname:\t"%fp) (optInd args)) <|>
-                      return (format ("outputformat:\t"%fp) (optFormat args)) <|>
-                      popListRow <|>
-                      return (format ("genotypeoutname:\t"%fp) (optOutGeno args)) <|>
-                      return (format ("snpoutname:\t"%fp) (optOutSnp args)) <|>
-                      return (format ("indivoutname:\t"%fp) (optOutInd args))
-        output paramFile content
+        let content = [(format ("genotypename:\t"%fp) (optGeno args)),
+                       (format ("snpname:\t"%fp) (optSnp args)),
+                       (format ("indivname:\t"%fp) (optInd args)),
+                       (format ("outputformat:\t"%fp) (optFormat args)),
+                       (format ("genotypeoutname:\t"%fp) (optOutGeno args)),
+                       (format ("snpoutname:\t"%fp) (optOutSnp args)),
+                       (format ("indivoutname:\t"%fp) (optOutInd args))]
+        output paramFile $ select (map unsafeTextToLine content) <|> popListRow
         ec <- proc "convertf" ["-p", format fp paramFile] empty
         case ec of
             ExitSuccess -> return ()
-            ExitFailure n -> err $ format ("convertf failed with exit code "%d) n
+            ExitFailure n -> err . unsafeTextToLine $ format ("convertf failed with exit code "%d) n
 
 parser :: Parser Options
 parser = Options <$> optPath "geno" 'g' "Genotype File"

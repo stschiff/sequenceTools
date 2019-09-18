@@ -13,3 +13,8 @@ V 1.4.0: Added single strand mode, and new triallelic treatment.
 V 1.4.0.1: Improved README, fixed output bug in genoStats.hs
 
 V 1.4.0.3: Updated to new sequence-formats version, now including reading of genetic position from eigenstrat files.
+
+V 1.4.0.4:
+* Fixed eigenstrat-output in pileupCaller to add a dot after the outputprefix before the file extensions.
+* Updated haskell-stack wrapper scripts for EIGENSOFT and ADMIXTOOLS.
+* Moved unmaintained scripts into unmaintained folder.

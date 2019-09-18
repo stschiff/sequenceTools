@@ -1,6 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle 
-
+-- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Applicative (optional)
@@ -20,20 +19,20 @@ main = do
     args <- options "Eigensoft smartpca wrapper" parser
     runManaged $ do
         paramFile <- mktempfile "." "smartpca_wrapper"
-        let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
-                      return (format ("snpname:\t"%fp) (optSnp args)) <|>
-                      return (format ("indivname:\t"%fp) (optInd args)) <|>
-                      return (format ("evecoutname:\t"%fp%".evec.txt") (optOutPrefix args)) <|>
-                      return (format ("evaloutname:\t"%fp%".eval.txt") (optOutPrefix args)) <|>
-                      (if (optLSQproject args) then "lsqproject:\tYES" else "") <|>
-                      case optPopList args of
-                          Just popList -> return (format ("poplistname:\t"%fp) popList)
-                          Nothing -> ""
-        output paramFile content
+        let content        = [(format ("genotypename:\t"%fp) (optGeno args)),
+                              (format ("snpname:\t"%fp) (optSnp args)),
+                              (format ("indivname:\t"%fp) (optInd args)),
+                              (format ("evecoutname:\t"%fp%".evec.txt") (optOutPrefix args)),
+                              (format ("evaloutname:\t"%fp%".eval.txt") (optOutPrefix args))]
+            lsqProjectLine = if (optLSQproject args) then return "lsqproject:\tYES" else empty
+            popListLine    = case optPopList args of
+                                Just popList -> return . unsafeTextToLine $ format ("poplistname:\t"%fp) popList
+                                Nothing -> empty
+        output paramFile $ select (map unsafeTextToLine content) <|> lsqProjectLine <|> popListLine
         ec <- proc "smartpca" ["-p", format fp paramFile] empty
         case ec of
             ExitSuccess -> return ()
-            ExitFailure n -> err $ format ("mergeit failed with exit code "%d) n
+            ExitFailure n -> err . unsafeTextToLine $ format ("mergeit failed with exit code "%d) n
 
 parser :: Parser Options
 parser = Options <$> optPath "geno" 'g' "Genotype File"

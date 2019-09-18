@@ -1,6 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle 
-
+-- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Applicative (optional)
@@ -18,15 +17,15 @@ main = do
     args <- options "Admixtools qp3Pop wrapper" parser
     runManaged $ do
         paramFile <- mktempfile "." "qp3Pop_wrapper"
-        let content = return (format ("genotypename:\t"%fp) (optGeno args)) <|>
-                      return (format ("snpname:\t"%fp) (optSnp args)) <|>
-                      return (format ("indivname:\t"%fp) (optInd args)) <|>
-                      return (format ("popfilename:\t"%fp) (optPopList args))
-        output paramFile content
+        let content = [(format ("genotypename:\t"%fp) (optGeno args)),
+                       (format ("snpname:\t"%fp) (optSnp args)),
+                       (format ("indivname:\t"%fp) (optInd args)),
+                       (format ("popfilename:\t"%fp) (optPopList args))]
+        output paramFile . select . map unsafeTextToLine $ content
         ec <- proc "qp3Pop" ["-p", format fp paramFile] empty
         case ec of
             ExitSuccess -> return ()
-            ExitFailure n -> err $ format ("qp3Pop failed with exit code "%d) n
+            ExitFailure n -> err . unsafeTextToLine $ format ("qp3Pop failed with exit code "%d) n
 
 parser :: Parser Options
 parser = Options <$> optPath "geno" 'g' "Genotype File"

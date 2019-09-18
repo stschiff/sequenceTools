@@ -1,6 +1,5 @@
 #!/usr/bin/env stack
--- stack --resolver lts-6.4 --install-ghc runghc --package turtle 
-
+-- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Applicative (optional)
@@ -27,27 +26,27 @@ main = do
     args <- options "Eigensoft mergeit wrapper" parser
     runManaged $ do
         paramFile <- mktempfile "." "mergeit_wrapper"
-        let content = return (format ("geno1:\t"%fp) (optGeno1 args)) <|>
-                      return (format ("snp1:\t"%fp) (optSnp1 args)) <|>
-                      return (format ("ind1:\t"%fp) (optInd1 args)) <|>
-                      return (format ("geno2:\t"%fp) (optGeno2 args)) <|>
-                      return (format ("snp2:\t"%fp) (optSnp2 args)) <|>
-                      return (format ("ind2:\t"%fp) (optInd2 args)) <|>
-                      return (format ("allowdups:\t"%s)
-                              (if optAllowDups args then "YES" else "NO")) <|>
-                      return (format ("strandcheck:\t"%s)
-                              (if optStrandCheck args then "YES" else "NO")) <|>
-                      return (format ("genooutfilename:\t"%fp%".geno") (optOutPrefix args)) <|>
-                      return (format ("snpoutfilename:\t"%fp%".snp") (optOutPrefix args)) <|>
-                      return (format ("indoutfilename:\t"%fp%".ind") (optOutPrefix args))
-        let content' = case optOutFormat args of
-                Just outFormat -> content <|> return (format ("outputformat:\t"%w) outFormat)
-                Nothing -> content
-        output paramFile content'
+        let content = [(format ("geno1:\t"%fp) (optGeno1 args)),
+                       (format ("snp1:\t"%fp) (optSnp1 args)),
+                       (format ("ind1:\t"%fp) (optInd1 args)),
+                       (format ("geno2:\t"%fp) (optGeno2 args)),
+                       (format ("snp2:\t"%fp) (optSnp2 args)),
+                       (format ("ind2:\t"%fp) (optInd2 args)),
+                       (format ("allowdups:\t"%s)
+                               (if optAllowDups args then "YES" else "NO")),
+                       (format ("strandcheck:\t"%s)
+                               (if optStrandCheck args then "YES" else "NO")),
+                       (format ("genooutfilename:\t"%fp%".geno") (optOutPrefix args)),
+                       (format ("snpoutfilename:\t"%fp%".snp") (optOutPrefix args)),
+                       (format ("indoutfilename:\t"%fp%".ind") (optOutPrefix args))]
+        let outputFormatLine = case optOutFormat args of
+                Just outFormat -> return . unsafeTextToLine $ format ("outputformat:\t"%w) outFormat
+                Nothing -> empty
+        output paramFile $ select (map unsafeTextToLine content) <|> outputFormatLine
         ec <- proc "mergeit" ["-p", format fp paramFile] empty
         case ec of
             ExitSuccess -> return ()
-            ExitFailure n -> err $ format ("mergeit failed with exit code "%d) n
+            ExitFailure n -> err . unsafeTextToLine $ format ("mergeit failed with exit code "%d) n
 
 parser :: Parser Options
 parser = Options <$> optPath "geno1" 'g' "First Genotype File"
