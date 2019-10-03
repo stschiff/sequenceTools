@@ -9,3 +9,4 @@ qpDstat_wrapper
 convertf_wrapper
 .DS_Store
 ._*
+stack.yaml.lock
