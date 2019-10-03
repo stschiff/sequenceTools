@@ -111,7 +111,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
     parseTransitionsMissing = OP.flag' TransitionsMissing (OP.long "transitionsMissing" <>
         OP.help "mark transitions as missing in the output, but do output the sites.")
     parseSingleStrandMode = OP.flag' SingleStrandMode (OP.long "singleStrandMode" <>
-        OP.help "At C/T polymorphisms, ignore reads aligning to the forward strand. \
+        OP.help "[THIS IS CURRENTLY AN EXPERIMENTAL FEATURE]. At C/T polymorphisms, ignore reads aligning to the forward strand. \
         \At G/A polymorphisms, ignore reads aligning to the reverse strand. This should \
         \remove post-mortem damage in ancient DNA libraries prepared with the non-UDG single-stranded protocol.")
     parseSnpFile = OP.strOption (OP.long "snpFile" <> OP.short 'f' <>
