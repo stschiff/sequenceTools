@@ -31,7 +31,17 @@ Next, you need to run my tool pileupCaller, which you run like this:
         --samplePopName MyPop -f <Eigenstrat.snp> \
         -e <My_output_prefix> < pileup.txt
 
-Here, options `--sampleNames` gives the names of the samples that is output in the Eigenstrat `*.ind` file, and and `-–samplePopName` is optional to also give the population names in that file (defaults to `Unknown`, you can also change it later in the output). Then, option `-f` gives an Eigenstrat positions file. This is important because the pileup file only contains sites which could be called in at least one of your samples. In order to later merge your dataset with another Eigenstrat file, pileupCaller will check every position in the other Eigenstrat file to make sure every position is output with the correct alleles and missing genotypes if appropriate. Finally, the `-e` option specifies Eigenstrat as output format and gives the prefix for the `*.ind`, `*.pos` and `*.geno` files. Without the `-e` option, pileupCaller will output in FreqSum format,  described [here](https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum), which is useful for debugging your pipeline, since it's just a single file that is output into the terminal and can therefore easily be inspected.
+Here, options `--sampleNames` gives the names of the samples that is output in the Eigenstrat `*.ind` file, and and `-–samplePopName` is optional to also give the population names in that file (defaults to `Unknown`, you can also change it later in the output). Then, (required) option `-f` needs an Eigenstrat positions file. This is required for pileupCaller to know what is the reference and which the alternative allele in your reference dataset that you want to call. An Eigenstrat positions file is a line-based file format, where each line denotes a SNP position, and there are exactly six required columns, denoting in order i) SNP ID, ii) chromosome, iii) genetic position (can be set to zero), iv) physical position, v) reference allele, vi) alternate allele. Here is an example:
+
+    rs0000  11  0.000000    0   A   C
+    rs1111  11  0.001000    100000  A   G
+    rs2222  11  0.002000    200000  A   T
+    rs3333  11  0.003000    300000  C   A
+    rs4444  11  0.004000    400000  G   A
+    rs5555  11  0.005000    500000  T   A
+    rs6666  11  0.006000    600000  G   T
+
+Finally, the `-e` option specifies Eigenstrat as output format and gives the prefix for the `*.ind`, `*.pos` and `*.geno` files. Without the `-e` option, pileupCaller will output in FreqSum format,  described [here](https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum), which is useful for debugging your pipeline, since it's just a single file that is output into the terminal and can therefore easily be inspected.
 
 You can also get some help by typing `pileupCaller -h`, which shows a lot more option, for example the sampling method, minimal coverage and other important options.
 
