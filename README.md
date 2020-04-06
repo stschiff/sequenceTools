@@ -11,7 +11,6 @@ This repository contains some programs that I use for processing sequencing data
 1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
 2. Run `stack install sequenceTools --resolver nightly`. You should now have the executables from this package under `~/.local/bin`.
 3. Add `~/.local/bin` to your PATH, for example by adding to your `~/.profile` or `~/.bash_profile` the line `PATH=$PATH:$HOME/.local/bin`. Run `source ~/.profile` or `source ~/.bash_profile`, respectively, to update your path.
-4. Run `pileupCaller --version`. It should output `1.4.0`. You're all set.
 
 ## pileupCaller
 
