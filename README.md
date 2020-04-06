@@ -1,8 +1,6 @@
 # SequenceTools
 
-[![Anaconda package](https://anaconda.org/bioconda/sequencetools/badges/installer/conda.svg)](https://anaconda.org/bioconda/sequencetools)
-
-(bioconda package available thanks to [apeltzer](https://github.com/apeltzer)!)
+(An outdated bioconda package is available, but it's from Mid-2018 and outdated, so I'm not advertising it here. If you want to contribute to packaging this up for bioconda, please have a look at the issues).
 
 This repository contains some programs that I use for processing sequencing data.
 
