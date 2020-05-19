@@ -1,0 +1,9 @@
+FROM alpine:edge
+
+RUN apk update
+RUN apk add --no-cache musl musl-dev musl-utils musl-dbg ghc ghc-dev ghc-doc cabal zlib-dev zlib zlib-static tar gzip wget
+RUN mkdir /sequencetools_dist
+ADD . source
+WORKDIR source
+RUN cabal new-update && cabal new-build --ghc-options="-threaded -optl-static -optl-pthread -fPIC"
+RUN find dist-newstyle -type f | grep "\/build\/" | grep "genoStats$\|pileupCaller$\|vcf2eigenstrat$" | xargs -I "{}" cp {} /sequencetools_dist/

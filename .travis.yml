@@ -1,0 +1,25 @@
+sudo: required
+
+language: c
+
+services:
+  - docker
+
+before_script:
+  - docker build --tag linux -f Dockerfile.static-linux .
+
+script:
+  - docker create --name linuxcontainer linux
+  - mkdir sequenceTools_x86_64-linux
+  - docker cp linuxcontainer:/sequencetools_dist/* sequenceTools_x86_64-linux
+  - cp LICENSE sequenceTools_x86_64-linux
+  - tar -cvzf sequencetools_static.x86_64-linux.tar.gz sequenceTools_x86_64-linux
+
+deploy:
+  provider: releases
+  skip_cleanup: true
+  api_key: 
+  file: "sequencetools_static.x86_64-linux.tar.gz"
+  on:
+    tags: true
+
