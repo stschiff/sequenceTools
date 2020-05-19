@@ -17,7 +17,7 @@ script:
 deploy:
   provider: releases
   skip_cleanup: true
-  api_key: 
+  api_key: $GITHUB_TOKEN
   file: "sequencetools_static.x86_64-linux.tar.gz"
   on:
     tags: true
