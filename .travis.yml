@@ -10,8 +10,7 @@ before_script:
 
 script:
   - docker create --name linuxcontainer linux
-  - mkdir sequenceTools_x86_64-linux
-  - docker cp linuxcontainer:/sequencetools_dist/* sequenceTools_x86_64-linux
+  - docker cp linuxcontainer:/sequencetools_dist sequenceTools_x86_64-linux
   - cp LICENSE sequenceTools_x86_64-linux
   - tar -cvzf sequencetools_static.x86_64-linux.tar.gz sequenceTools_x86_64-linux
 
