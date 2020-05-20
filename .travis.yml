@@ -21,7 +21,7 @@ deploy:
   provider: releases
   skip_cleanup: true
   api_key: $GITHUB_TOKEN
-  repo: gitter-bioinf/sequenceTools
+  repo: sequencetoolsconda/sequenceTools
   file: "sequencetools_static.x86_64-linux.tar.gz"
   on:
     tags: true
