@@ -7,6 +7,7 @@ import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
 import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
     filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
+import SequenceFormats.Plink (writePlink)
 
 import Data.List.Split (splitOn)
 import qualified Data.Vector.Unboxed.Mutable as V
@@ -21,7 +22,7 @@ import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data OutFormat = EigenstratFormat String String | FreqSumFormat
+data OutFormat = EigenstratFormat String String | PlinkFormat String String | FreqSumFormat
 
 data ProgOpt = ProgOpt CallingMode Bool (Maybe Int) Int TransitionsMode FilePath OutFormat (Either [String] FilePath)
     --optCallingMode :: CallingMode,
@@ -131,11 +132,18 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
         \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
-    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
+    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> (PlinkFormat <$> parsePlinkPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
         \SNP and IND file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt \
+        \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
+        \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
+        \is useful for testing your pipeline, since it's output to standard out")
+    parsePlinkPrefix = OP.strOption (OP.long "plinkOut" <> OP.short 'p' <>
+        OP.metavar "<FILE_PREFIX>" <>
+        OP.help "Set Plink as output format. Specify the filenames for the Plink \
+        \BIM and FAM file outputs: <FILE_PREFIX>.bim and <FILE_PREFIX>.fam \
         \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
         \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
         \is useful for testing your pipeline, since it's output to standard out")
@@ -201,6 +209,7 @@ runMain = do
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
         EigenstratFormat outPrefix popName -> outputEigenStrat outPrefix popName freqSumProducer
+        PlinkFormat outPrefix popName -> outputPlink outPrefix popName freqSumProducer
     outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
@@ -293,6 +302,23 @@ outputEigenStrat outPrefix popName freqSumProducer = do
     lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
                 P.map (freqSumToEigenstrat diploidizeCall) >->
                 writeEigenstrat genoOut snpOut indOut indEntries
+
+outputPlink :: FilePath -> String -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputPlink outPrefix popName freqSumProducer = do
+    transitionsMode <- asks envTransitionsMode
+    sampleNames <- asks envSampleNames
+    callingMode <- asks envCallingMode
+    let diploidizeCall = case callingMode of
+            RandomCalling -> True
+            MajorityCalling _ -> True
+            RandomDiploidCalling -> False
+    let snpOut = outPrefix <> ".bim"
+        indOut = outPrefix <> ".fam"
+        genoOut = outPrefix <> ".bed"
+    let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
+    lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
+                P.map (freqSumToEigenstrat diploidizeCall) >->
+                writePlink genoOut snpOut indOut indEntries
 
 outputStats :: App ()
 outputStats = do
