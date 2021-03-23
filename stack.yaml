@@ -3,5 +3,5 @@ packages:
 - '.'
 extra-deps:
 - pipes-ordered-zip-1.1.0
-- sequence-formats-1.4.1
+- sequence-formats-1.6.1
 # - ../sequence-formats
