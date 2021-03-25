@@ -1,7 +1,5 @@
-resolver: lts-14.1
+resolver: lts-17.0
 packages:
 - '.'
 extra-deps:
-- pipes-ordered-zip-1.1.0
 - sequence-formats-1.6.1
-# - ../sequence-formats
