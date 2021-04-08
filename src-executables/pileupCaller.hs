@@ -17,12 +17,12 @@ import Pipes.OrderedZip (orderedZip, orderCheckPipe)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
 import RIO
-import System.IO (readFile, hPutStrLn, stderr)
+import System.IO (readFile, hPutStrLn, stderr, print)
 import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data OutFormat = EigenstratFormat String String | PlinkFormat String String | FreqSumFormat
+data OutFormat = EigenstratFormat String String | PlinkFormat String String | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt CallingMode Bool (Maybe Int) Int TransitionsMode FilePath OutFormat (Either [String] FilePath)
     --optCallingMode :: CallingMode,
@@ -52,6 +52,9 @@ data Env = Env {
     envSampleNames :: [String],
     envStats :: ReadStats
 }
+
+instance Show Env where
+    show (Env m r d t o sf sn _) = show (m, r, d, t, o, sf, sn)
 
 type App = ReaderT Env (SafeT IO)
 
@@ -202,15 +205,17 @@ initialiseEnvironment args = do
 
 runMain :: App ()
 runMain = do
-    let pileupProducer = readPileupFromStdIn
-    snpFile <- asks envSnpFile
-    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
-    outFormat <- asks envOutFormat
-    case outFormat of
-        FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
-        PlinkFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
-    outputStats
+    env_ <- ask
+    liftIO $ print env_
+    -- let pileupProducer = readPileupFromStdIn
+    -- snpFile <- asks envSnpFile
+    -- freqSumProducer <- pileupToFreqSum snpFile pileupProducer
+    -- outFormat <- asks envOutFormat
+    -- case outFormat of
+    --     FreqSumFormat -> outputFreqSum freqSumProducer
+    --     EigenstratFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
+    --     PlinkFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
+    -- outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
     App (Producer FreqSumEntry (SafeT IO) ())

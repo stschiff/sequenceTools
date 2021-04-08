@@ -16,9 +16,9 @@ import qualified Pipes.Prelude as P
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall deriving (Show, Eq)
 
 -- |A datatype to specify the calling mode
-data CallingMode = MajorityCalling Bool | RandomCalling | RandomDiploidCalling
+data CallingMode = MajorityCalling Bool | RandomCalling | RandomDiploidCalling deriving (Show)
 
-data TransitionsMode = TransitionsMissing | SkipTransitions | SingleStrandMode | AllSites deriving (Eq)
+data TransitionsMode = TransitionsMissing | SkipTransitions | SingleStrandMode | AllSites deriving (Eq, Show)
 
 -- |a function to turn a call into the dosage of non-reference alleles
 callToDosage :: Char -> Char -> Call -> Maybe Int
