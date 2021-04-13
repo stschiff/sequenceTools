@@ -17,7 +17,7 @@ library
                         SequenceTools.PileupCaller
     hs-source-dirs:     src
     build-depends:      base >= 4.7 && < 5, optparse-applicative, random,
-                        sequence-formats >= 1.4.1, bytestring, vector, pipes
+                        sequence-formats, bytestring, vector, pipes
     other-modules:      Paths_sequenceTools
     default-language:   Haskell2010
 
@@ -25,7 +25,7 @@ Test-Suite sequenceToolsTests
   type:                exitcode-stdio-1.0
   main-is:             Spec.hs
   hs-source-dirs:      test
-  build-depends:       base, hspec, sequenceTools, sequence-formats >= 1.4.1,
+  build-depends:       base, hspec, sequenceTools, sequence-formats,
                        vector, bytestring, pipes
   other-modules:       SequenceTools.UtilsSpec,
                        SequenceTools.PileupCallerSpec
@@ -34,24 +34,24 @@ Test-Suite sequenceToolsTests
 executable pileupCaller
     main-is:            pileupCaller.hs
     hs-source-dirs:     src-executables
-    build-depends:      base, sequenceTools, sequence-formats >= 1.4.1,
+    build-depends:      base, sequenceTools, sequence-formats,
                         optparse-applicative, pipes, rio, vector, random, bytestring,
-                        pipes-safe, pipes-ordered-zip >= 1.1.0, split, ansi-wl-pprint
+                        pipes-safe, pipes-ordered-zip, split, ansi-wl-pprint
     default-language:   Haskell2010
     ghc-options:        -threaded -rtsopts -with-rtsopts=-N2
 
 executable vcf2eigenstrat
     main-is:            vcf2eigenstrat.hs
     hs-source-dirs:     src-executables
-    build-depends:      base, sequenceTools, pipes-ordered-zip >= 1.1.0,
-                        sequence-formats >= 1.4.1, bytestring, vector,
+    build-depends:      base, sequenceTools, pipes-ordered-zip,
+                        sequence-formats, bytestring, vector,
                         optparse-applicative, pipes, pipes-safe
     default-language:   Haskell2010
 
 executable genoStats
     main-is:            genoStats.hs
     hs-source-dirs:     src-executables
-    build-depends:      base, sequence-formats >= 1.4.1, sequenceTools,
+    build-depends:      base, sequence-formats, sequenceTools,
                         foldl, bytestring, vector, lens-family, optparse-applicative,
                         pipes, pipes-group, pipes-safe
     default-language:   Haskell2010

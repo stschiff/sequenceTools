@@ -7,6 +7,7 @@ import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
 import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
     filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
+import SequenceFormats.Plink (writePlink)
 
 import Data.List.Split (splitOn)
 import qualified Data.Vector.Unboxed.Mutable as V
@@ -16,12 +17,12 @@ import Pipes.OrderedZip (orderedZip, orderCheckPipe)
 import qualified Pipes.Prelude as P
 import Pipes.Safe (runSafeT, SafeT)
 import RIO
-import System.IO (readFile, hPutStrLn, stderr)
+import System.IO (readFile, hPutStrLn, stderr, print)
 import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data OutFormat = EigenstratFormat String String | FreqSumFormat
+data OutFormat = EigenstratFormat String String | PlinkFormat String String | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt CallingMode Bool (Maybe Int) Int TransitionsMode FilePath OutFormat (Either [String] FilePath)
     --optCallingMode :: CallingMode,
@@ -51,6 +52,9 @@ data Env = Env {
     envSampleNames :: [String],
     envStats :: ReadStats
 }
+
+instance Show Env where
+    show (Env m r d t o sf sn _) = show (m, r, d, t, o, sf, sn)
 
 type App = ReaderT Env (SafeT IO)
 
@@ -131,11 +135,18 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
         \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
-    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
+    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> (PlinkFormat <$> parsePlinkPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
-        \SNP and IND file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt \
+        \SNP, IND and GENO file outputs: <FILE_PREFIX>.snp, <FILE_PREFIX>.ind and <FILE_PREFIX>.geno. \
+        \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
+        \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
+        \is useful for testing your pipeline, since it's output to standard out")
+    parsePlinkPrefix = OP.strOption (OP.long "plinkOut" <> OP.short 'p' <>
+        OP.metavar "<FILE_PREFIX>" <>
+        OP.help "Set Plink as output format. Specify the filenames for the Plink \
+        \BIM, FAM and BED file outputs: <FILE_PREFIX>.bim, <FILE_PREFIX>.fam and <FILE_PREFIX>.bed. \
         \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
         \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
         \is useful for testing your pipeline, since it's output to standard out")
@@ -194,14 +205,17 @@ initialiseEnvironment args = do
 
 runMain :: App ()
 runMain = do
-    let pileupProducer = readPileupFromStdIn
-    snpFile <- asks envSnpFile
-    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
-    outFormat <- asks envOutFormat
-    case outFormat of
-        FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix popName -> outputEigenStrat outPrefix popName freqSumProducer
-    outputStats
+    env_ <- ask
+    liftIO $ print env_
+    -- let pileupProducer = readPileupFromStdIn
+    -- snpFile <- asks envSnpFile
+    -- freqSumProducer <- pileupToFreqSum snpFile pileupProducer
+    -- outFormat <- asks envOutFormat
+    -- case outFormat of
+    --     FreqSumFormat -> outputFreqSum freqSumProducer
+    --     EigenstratFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
+    --     PlinkFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
+    -- outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
     App (Producer FreqSumEntry (SafeT IO) ())
@@ -277,8 +291,8 @@ outputFreqSum freqSumProducer = do
         outProd = freqSumProducer >-> filterTransitions transitionsOnly
     lift . runEffect $ outProd >-> printFreqSumStdOut header'
 
-outputEigenStrat :: FilePath -> String -> Producer FreqSumEntry (SafeT IO) () -> App ()
-outputEigenStrat outPrefix popName freqSumProducer = do
+outputEigenStratOrPlink :: FilePath -> String -> Bool -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputEigenStratOrPlink outPrefix popName formatIsPlink freqSumProducer = do
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
     callingMode <- asks envCallingMode
@@ -286,13 +300,15 @@ outputEigenStrat outPrefix popName freqSumProducer = do
             RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
-    let snpOut = outPrefix <> ".snp.txt"
-        indOut = outPrefix <> ".ind.txt"
-        genoOut = outPrefix <> ".geno.txt"
+    let [snpOut, indOut, genoOut] =
+            if formatIsPlink
+            then map (outPrefix <>) [".bim", ".fam", ".bed"]
+            else map (outPrefix <>) [".snp", ".ind", ".geno"]
+    let writeFunc = if formatIsPlink then writePlink else writeEigenstrat
     let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
     lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
                 P.map (freqSumToEigenstrat diploidizeCall) >->
-                writeEigenstrat genoOut snpOut indOut indEntries
+                writeFunc genoOut snpOut indOut indEntries
 
 outputStats :: App ()
 outputStats = do
