@@ -18,3 +18,5 @@ V 1.4.0.4:
 * Fixed eigenstrat-output in pileupCaller to add a dot after the outputprefix before the file extensions.
 * Updated haskell-stack wrapper scripts for EIGENSOFT and ADMIXTOOLS.
 * Moved unmaintained scripts into unmaintained folder.
+
+V 1.5.0: Added support for Plink output

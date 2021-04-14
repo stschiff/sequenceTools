@@ -206,16 +206,16 @@ initialiseEnvironment args = do
 runMain :: App ()
 runMain = do
     env_ <- ask
-    liftIO $ print env_
-    -- let pileupProducer = readPileupFromStdIn
-    -- snpFile <- asks envSnpFile
-    -- freqSumProducer <- pileupToFreqSum snpFile pileupProducer
-    -- outFormat <- asks envOutFormat
-    -- case outFormat of
-    --     FreqSumFormat -> outputFreqSum freqSumProducer
-    --     EigenstratFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
-    --     PlinkFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
-    -- outputStats
+    -- liftIO $ print env_
+    let pileupProducer = readPileupFromStdIn
+    snpFile <- asks envSnpFile
+    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
+    outFormat <- asks envOutFormat
+    case outFormat of
+        FreqSumFormat -> outputFreqSum freqSumProducer
+        EigenstratFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
+        PlinkFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
+    outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
     App (Producer FreqSumEntry (SafeT IO) ())
