@@ -4,11 +4,22 @@
 
 This repository contains some programs that I use for processing sequencing data.
 
-# Simple Installation of the main tools
+# Installation
+## Simple Installation via stack and hackage
+
+This installation installs the latest version that is up on [hackage](https://hackage.haskell.org/package/sequenceTools):
 
 1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
 2. Run `stack install sequenceTools --resolver nightly`. You should now have the executables from this package under `~/.local/bin`.
 3. Add `~/.local/bin` to your PATH, for example by adding to your `~/.profile` or `~/.bash_profile` the line `PATH=$PATH:$HOME/.local/bin`. Run `source ~/.profile` or `source ~/.bash_profile`, respectively, to update your path.
+
+## Installation from source via stack
+
+1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
+2. Clone this repository via `git clone https://github.com/stschiff/sequenceTools.git`
+3. Install via `cd sequenceTools; stack install` 
+
+# Commands
 
 ## pileupCaller
 
