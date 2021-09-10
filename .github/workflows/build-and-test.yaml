@@ -1,0 +1,20 @@
+name: build and test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    name: Hello World
+    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v1
+      with:
+        enable-stack: true
+    - name: Build
+      run: stack build --pedantic
