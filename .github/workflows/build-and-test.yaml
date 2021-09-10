@@ -6,8 +6,8 @@ on:
     branches: [master]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+  build-and-test:
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout repo
       uses: actions/checkout@v2
@@ -17,3 +17,6 @@ jobs:
         enable-stack: true
     - name: Build
       run: stack build --pedantic
+    - name: Test
+      run: stack test --pedantic
+  
