@@ -13,7 +13,6 @@ import Control.Exception.Base (throwIO, AssertionFailed(..))
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.ByteString.Char8 as B
-import Data.Monoid ((<>))
 -- import Debug.Trace (trace)
 import qualified Options.Applicative as OP
 import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
