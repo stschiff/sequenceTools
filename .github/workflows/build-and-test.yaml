@@ -7,7 +7,6 @@ on:
 
 jobs:
   build:
-    name: Hello World
     runs-on: ubuntu-latest # or macOS-latest, or windows-latest
     steps:
     - name: Checkout repo

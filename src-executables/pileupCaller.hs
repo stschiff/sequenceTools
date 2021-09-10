@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..), 
     EigenstratIndEntry(..), Sex(..), writeEigenstrat)
@@ -9,15 +9,20 @@ import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, call
     filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
 import SequenceFormats.Plink (writePlink)
 
+import Control.Applicative ((<|>))
+import Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad (forM_)
+import Data.IORef (IORef, readIORef, modifyIORef', newIORef)
 import Data.List.Split (splitOn)
 import qualified Data.Vector.Unboxed.Mutable as V
 import qualified Options.Applicative as OP
 import Pipes (yield, (>->), runEffect, Producer, for)
-import Pipes.OrderedZip (orderedZip, orderCheckPipe)
 import qualified Pipes.Prelude as P
+import Pipes.OrderedZip (orderedZip, orderCheckPipe)
 import Pipes.Safe (runSafeT, SafeT)
-import RIO
-import System.IO (readFile, hPutStrLn, stderr, print)
+import System.IO (hPutStrLn, stderr)
 import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
@@ -205,8 +210,6 @@ initialiseEnvironment args = do
 
 runMain :: App ()
 runMain = do
-    env_ <- ask
-    -- liftIO $ print env_
     let pileupProducer = readPileupFromStdIn
     snpFile <- asks envSnpFile
     freqSumProducer <- pileupToFreqSum snpFile pileupProducer
@@ -324,7 +327,7 @@ outputStats = do
         \# avgSampledFrom: mean coverage of pileup after removing reads with tri-allelic alleles \n\
         \SampleName\tTotalSites\tNonMissingCalls\tavgRawReads\tavgDamageCleanedReads\tavgSampledFrom"
     forM_ (zip [0..] sampleNames) $ \(i, name) -> do
-        totalS <- readIORef totalSites
+        totalS <- liftIO $ readIORef totalSites
         nonMissingSites <- V.read nonMissingSitesVec i
         rawReads <- V.read rawReadsVec i
         damageCleanedReads <- V.read damageCleanedReadsVec i
