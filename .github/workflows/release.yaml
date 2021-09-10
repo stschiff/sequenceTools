@@ -1,0 +1,20 @@
+name: Release
+on: workflow_dispatch
+
+jobs:
+  build-on-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Build Docker image
+      run: docker build -t linux -f Dockerfile.linux .
+    - name: Create container
+      run: docker create --name linuxcontainer linux
+    - name: Copy executable
+      run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-linux
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: linux-executable
+        path: pileupCaller-linux
