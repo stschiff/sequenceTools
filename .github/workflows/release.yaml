@@ -21,3 +21,35 @@ jobs:
     #     name: linux-executable
     #     path: pileupCaller-linux
     - run: echo $GITHUB_REF
+    # This gives something like refs/tags/v1.5.1
+    - name: update-release
+      run: |
+        owner=stschiff
+        repo=sequenceTools
+        tag=$(basename $GITHUB_REF)
+        filename=dummy.txt
+
+        GH_API="https://api.github.com"
+        GH_REPO="$GH_API/repos/$owner/$repo"
+        GH_TAGS="$GH_REPO/releases/tags/$tag"
+        AUTH="Authorization: token $github_api_token"
+
+        # Validate token.
+        curl -o /dev/null -sH "$AUTH" $GH_REPO || { echo "Error: Invalid repo, token or network issue!";  exit 1; }
+
+        # Read asset tags.
+        response=$(curl -sH "$AUTH" $GH_TAGS)
+
+        # Get ID of the asset based on given filename.
+        eval $(echo "$response" | grep -m 1 "id.:" | grep -w id | tr : = | tr -cd '[[:alnum:]]=')
+        [ "$id" ] || { echo "Error: Failed to get release id for tag: $tag"; echo "$response" | awk 'length($0)<100' >&2; exit 1; }
+
+        # make dummy file:
+        fil
+        echo "Hello, world. $GITHUB_REF, $tag, $id" > $filename
+
+        # Construct url
+        GH_ASSET="https://uploads.github.com/repos/$owner/$repo/releases/$id/assets?name=$(basename $filename)"
+        curl --data-binary @"$filename" -H "$AUTH" -H "Content-Type: application/octet-stream" $GH_ASSET
+
+
