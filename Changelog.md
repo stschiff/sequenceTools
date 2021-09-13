@@ -20,3 +20,5 @@ V 1.4.0.4:
 * Moved unmaintained scripts into unmaintained folder.
 
 V 1.5.0: Added support for Plink output
+
+V 1.5.1: Added automatic building
