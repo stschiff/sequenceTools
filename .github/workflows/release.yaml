@@ -32,7 +32,7 @@ jobs:
         GH_API="https://api.github.com"
         GH_REPO="$GH_API/repos/$owner/$repo"
         GH_TAGS="$GH_REPO/releases/tags/$tag"
-        AUTH="Authorization: token $github_api_token"
+        AUTH="Authorization: token ${{ secrets.GITHUB_TOKEN }}"
 
         # Validate token.
         curl -o /dev/null -sH "$AUTH" $GH_REPO || { echo "Error: Invalid repo, token or network issue!";  exit 1; }
