@@ -1,7 +1,5 @@
 name: Release
-on:
-  release:
-    types: [created]
+on: release
 
 jobs:
   build-on-linux:
