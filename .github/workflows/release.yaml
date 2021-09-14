@@ -16,7 +16,7 @@ jobs:
     - name: Copy executable
       run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-linux
     - name: update-release
-      run: .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=pileupCaller-linux
+      run: bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=pileupCaller-linux
   build-on-mac:
     runs-on: macos-latest
     steps:
@@ -31,4 +31,4 @@ jobs:
     - name: Copy executable
       run: cp .local/bin/pileupCaller pileupCaller-macOS
     - name: update-release
-      run: .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=pileupCaller-macOS
+      run: bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=pileupCaller-macOS
