@@ -29,6 +29,6 @@ jobs:
     - name: Build
       run: stack install
     - name: Copy executable
-      run: cp .local/bin/pileupCaller pileupCaller-macOS
+      run: cp ~/.local/bin/pileupCaller pileupCaller-macOS
     - name: update-release
       run: bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=pileupCaller-macOS
