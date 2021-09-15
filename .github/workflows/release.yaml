@@ -37,6 +37,6 @@ jobs:
     - name: Update-release
       run: |
         for TOOL in genoStats pileupCaller vcf2eigenstrat; do
-          cp .local/bin/$TOOL $TOOL-macOS
+          cp ~/.local/bin/$TOOL $TOOL-macOS
           bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-macOS
         done
