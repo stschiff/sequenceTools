@@ -21,7 +21,7 @@ jobs:
     - name: update-release
       run: |
         for TOOL in genoStats pileupCaller vcf2eigenstrat; do
-          .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
+          bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
         done
   build-on-mac:
     runs-on: macos-latest
@@ -38,5 +38,5 @@ jobs:
       run: |
         for TOOL in genoStats pileupCaller vcf2eigenstrat; do
           cp .local/bin/$TOOL $TOOL-macOS
-          .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-macOS
+          bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-macOS
         done
