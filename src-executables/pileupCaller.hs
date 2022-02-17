@@ -27,17 +27,19 @@ import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data OutFormat = EigenstratFormat String String | PlinkFormat String String | FreqSumFormat deriving (Show)
+data OutFormat = EigenstratFormat FilePath | PlinkFormat FilePath | FreqSumFormat deriving (Show)
 
-data ProgOpt = ProgOpt CallingMode Bool (Maybe Int) Int TransitionsMode FilePath OutFormat (Either [String] FilePath)
-    --optCallingMode :: CallingMode,
-    --optKeepInCongruentReads :: Bool,
-    --optSeed :: Maybe Int,
-    --optMinDepth :: Int,
-    --optTransitionsMode :: TransitionsMode,
-    --optSnpFile :: FilePath,
-    --optOutFormat :: OutFormat,
-    --optSampleNames :: Either [String] FilePath
+data ProgOpt = ProgOpt {
+    optCallingMode :: CallingMode,
+    optKeepInCongruentReads :: Bool,
+    optSeed :: Maybe Int,
+    optMinDepth :: Int,
+    optTransitionsMode :: TransitionsMode,
+    optSnpFile :: FilePath,
+    optOutFormat :: OutFormat,
+    optSampleNames :: Either [String] FilePath,
+    optPopName :: String
+}
 
 data ReadStats = ReadStats {
     rsTotalSites :: IORef Int,
@@ -55,11 +57,12 @@ data Env = Env {
     envOutFormat :: OutFormat,
     envSnpFile :: FilePath,
     envSampleNames :: [String],
+    envPopName :: String,
     envStats :: ReadStats
 }
 
 instance Show Env where
-    show (Env m r d t o sf sn _) = show (m, r, d, t, o, sf, sn)
+    show (Env m r d t o sf sn pn _) = show (m, r, d, t, o, sf, sn, pn)
 
 type App = ReaderT Env (SafeT IO)
 
@@ -74,8 +77,15 @@ parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
     (OP.progDescDoc (Just programHelpDoc))
 
 argParser :: OP.Parser ProgOpt
-argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parseSeed <*> parseMinDepth <*>
-    parseTransitionsMode <*> parseSnpFile <*> parseFormat <*> parseSampleNames
+argParser = ProgOpt <$> parseCallingMode
+                    <*> parseKeepIncongruentReads
+                    <*> parseSeed
+                    <*> parseMinDepth
+                    <*> parseTransitionsMode
+                    <*> parseSnpFile
+                    <*> parseFormat
+                    <*> parseSampleNames
+                    <*> parsePopName
   where
     parseCallingMode = parseRandomCalling <|> parseMajorityCalling <|> parseRandomDiploidCalling
     parseRandomCalling = OP.flag' RandomCalling (OP.long "randomHaploid" <>
@@ -140,7 +150,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
         \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
         \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
-    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseSamplePopName) <|> (PlinkFormat <$> parsePlinkPrefix <*> parseSamplePopName) <|> pure FreqSumFormat
+    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix) <|> (PlinkFormat <$> parsePlinkPrefix) <|> pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
@@ -162,7 +172,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseKeepIncongruentReads <*> parse
     parseSampleNameFile = OP.option (Right <$> OP.str) (OP.long "sampleNameFile" <> OP.metavar "<FILE>" <>
         OP.help "give the names of the samples in a file with one name per \
         \line")
-    parseSamplePopName = OP.strOption (OP.long "samplePopName" <> OP.value "Unknown" <> OP.showDefault <>
+    parsePopName = OP.strOption (OP.long "samplePopName" <> OP.value "Unknown" <> OP.showDefault <>
         OP.metavar "POP" <>
         OP.help "specify the population name of the samples, which is included\
         \ in the output *.ind.txt file in Eigenstrat output. This will be ignored if the output \
@@ -191,7 +201,7 @@ programHelpDoc =
 initialiseEnvironment :: ProgOpt -> IO Env
 initialiseEnvironment args = do
     let (ProgOpt callingMode keepInCongruentReads seed minDepth
-            transitionsMode snpFile outFormat sampleNames) = args
+            transitionsMode snpFile outFormat sampleNames popName) = args
     case seed of
         Nothing -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
@@ -201,7 +211,7 @@ initialiseEnvironment args = do
     let n = length sampleNamesList
     readStats <- ReadStats <$> newIORef 0 <*> makeVec n <*> makeVec n <*> makeVec n <*> makeVec n
     return $ Env callingMode keepInCongruentReads minDepth transitionsMode
-        outFormat snpFile sampleNamesList readStats
+        outFormat snpFile sampleNamesList popName readStats
   where
     makeVec n = do
         v <- V.new n 
@@ -214,10 +224,11 @@ runMain = do
     snpFile <- asks envSnpFile
     freqSumProducer <- pileupToFreqSum snpFile pileupProducer
     outFormat <- asks envOutFormat
+    popName <- asks envPopName
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
-        PlinkFormat outPrefix popName -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
+        EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
+        PlinkFormat outPrefix -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
     outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->

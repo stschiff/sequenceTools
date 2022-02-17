@@ -22,3 +22,5 @@ V 1.4.0.4:
 V 1.5.0: Added support for Plink output
 
 V 1.5.1: Added automatic building
+
+V 1.5.2: Fixed a bug with --samplePopName having to be entered after -p or -e. Fixed a bug in the sequence-formats dependency.

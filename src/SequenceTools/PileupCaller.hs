@@ -105,13 +105,13 @@ filterTransitions transversionsMode =
         ((ref == 'T') && (alt == 'C'))
 
 cleanSSdamageAllSamples :: Char -> Char -> [String] -> [[Strand]] -> [String]
-cleanSSdamageAllSamples ref alt basesPerSample strandPerSample =
-    if   (ref, alt) == ('C', 'T') || (ref, alt) == ('T', 'C')
-    then [removeForwardBases bases strands | (bases, strands) <- zip basesPerSample strandPerSample]
-    else
-        if (ref, alt) == ('G', 'A') || (ref, alt) == ('A', 'G')
-        then [removeReverseBases bases strands | (bases, strands) <- zip basesPerSample strandPerSample]
-        else basesPerSample
+cleanSSdamageAllSamples ref alt basesPerSample strandPerSample
+    | (ref, alt) == ('C', 'T') || (ref, alt) == ('T', 'C') =
+        [removeForwardBases bases strands | (bases, strands) <- zip basesPerSample strandPerSample]
+    | (ref, alt) == ('G', 'A') || (ref, alt) == ('A', 'G') =
+        [removeReverseBases bases strands | (bases, strands) <- zip basesPerSample strandPerSample]
+    | otherwise =
+        basesPerSample
   where
     removeForwardBases = removeReads ForwardStrand
     removeReverseBases = removeReads ReverseStrand
