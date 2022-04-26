@@ -71,6 +71,9 @@ There is however an issue here: If you have aligned your read data to a version 
         --samplePopName MyPop -f <Eigenstrat.snp> \
         -o EigenStrat -e <My_output_prefix>
 
+    
+Note: You do not have to use a positions file in your `samtools` step. You can also just generate pileup-data for every covered position (default without passing a positions file via `-l`) and have pileupCaller filter the sites for you. This makes sense for dense genotyping, but a positions file might speed up the process for sparser genotyping.
+
 ## vcf2eigenstrat
 
 Simple tool to convert a VCF file to an Eigenstrat file. Pretty self-explanatory. Please run `vcf2eigenstrat --help` to output some documentation.
