@@ -62,6 +62,9 @@ Note that you can also fuse the two steps above into one unix pipe:
         --samplePopName MyPop -f <Eigenstrat.snp> \
         -e <My_output_prefix>
 
+Note that `--randomHaploid` is only one way to call genotypes. If you need stricter calling, you may want to try `--majorityCall --downSampling --minDepth 3`, which calls genotypes only on sites with at least three reads, downsamples to three if there are more, and then calls whatever of the two alleles has the majority. This will reduce errors, but also yield less data in case of lower coverage.
+            
+            
 There is however an issue here: If you have aligned your read data to a version of the reference genome that uses `chr1`, `chr2` and so on as chromosome names, the resulting Eigenstrat file will be valid, but won't merge with other Eigenstrat datasets that use chromosome names `1`, `2` and so on. I would therefore recommend to strip the `chr` from your chromosome names if necessary. You can do that easily using a little UNIX filter using the `sed` tool. In the full pipeline, it looks like this:
 
     samtools mpileup -R -B -q30 -Q30 -l <list_of_positions.txt> \
