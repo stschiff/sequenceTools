@@ -5,19 +5,29 @@
 This repository contains some programs that I use for processing sequencing data.
 
 # Installation
-## Simple Installation via stack and hackage
 
-This installation installs the latest version that is up on [hackage](https://hackage.haskell.org/package/sequenceTools):
+## Installation via precompiled executables
 
-1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
-2. Run `stack install sequenceTools --resolver nightly`. You should now have the executables from this package under `~/.local/bin`.
-3. Add `~/.local/bin` to your PATH, for example by adding to your `~/.profile` or `~/.bash_profile` the line `PATH=$PATH:$HOME/.local/bin`. Run `source ~/.profile` or `source ~/.bash_profile`, respectively, to update your path.
+* [Download the latest Executable](https://github.com/stschiff/sequenceTools/releases/latest) that best matches your platform.
 
-## Installation from source via stack
+For example, to install `pileupCaller` in Linux, you can run the following commands to get started:
 
-1. Download stack (https://docs.haskellstack.org/en/stable/README/#how-to-install<Paste>).
-2. Clone this repository via `git clone https://github.com/stschiff/sequenceTools.git`
-3. Install via `cd sequenceTools; stack install` 
+```bash
+# download the current stable release binary
+wget https://github.com/stschiff/sequenceTools/releases/latest/download/pileupCaller-linux
+# make it executable
+chmod +x pileupCaller-linux
+# run it
+./trident-linux -h
+```
+
+## Installation from source
+
+1. Clone the repository: `git clone https://github.com/stschiff/sequenceTools.git`
+2. Go into the repository: `cd sequenceTools`
+3. Compile the executables in the repository using `stack`: `stack install`
+
+This last step will take a while, as it not only compiles the source, but also first downloads the correct version of the Haskell compiler.
 
 # Commands
 
