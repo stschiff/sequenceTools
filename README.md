@@ -1,6 +1,6 @@
 # SequenceTools
 
-[![Install with Bioconda](https://anaconda.org/bioconda/sequencetools/badges/installer/conda.svg)](https://anaconda.org/bioconda/sequencetools)
+[Install with Bioconda](https://anaconda.org/bioconda/sequencetools)
 
 This repository contains some programs that I use for processing sequencing data.
 
