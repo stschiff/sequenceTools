@@ -87,6 +87,17 @@ There is however an issue here: If you have aligned your read data to a version 
     
 Note: You do not have to use a positions file in your `samtools` step. You can also just generate pileup-data for every covered position (default without passing a positions file via `-l`) and have pileupCaller filter the sites for you. This makes sense for dense genotyping, but a positions file might speed up the process for sparser genotyping.
 
+### SingleStrandMode
+
+pileupCaller supports a special calling mode (`--singleStrandMode`) for sequencing data generated from single-stranded libraries (Gansauge, Marie-Theres, and Matthias Meyer. 2013. “Single-Stranded DNA Library Preparation for the Sequencing of Ancient or Damaged DNA.” Nature Protocols 8 (4): 737–48.). The idea is that at C/T SNPs, forward mapping reads are discarded, and at G/A SNPs, reverse mapping reads are discarded. This will get rid of post-mortem ancient DNA damage in a conservative way, i.e. it will remove more than necessary and make sure that the remainder of the data is clean of DNA damage, improving the overall calling quality.
+
+There is an important catch: If you have data from paired-end sequencing, and you are using _unmerged_ reads, then this approach will fail, as it will then _not_ discard potentially damaged reads.
+
+So there are two options if you have Paired-end sequencing data:
+1) Use only merged reads and `--singleStrandMode`
+2) Use all reads but do _not_ use `--singleStrandMode`. Instead, in such cases I recommend to trim reads from both ends to remove ancient DNA damage. Depending on the details of the library construction, you may have UDG-treated data, in which case fewer basepairs would have to be trimmed.
+
+
 ## vcf2eigenstrat
 
 Simple tool to convert a VCF file to an Eigenstrat file. Pretty self-explanatory. Please run `vcf2eigenstrat --help` to output some documentation.
