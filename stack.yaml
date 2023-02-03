@@ -4,5 +4,5 @@ packages:
 extra-deps:
 # - sequence-formats-1.6.3
 - git: https://github.com/stschiff/sequence-formats
-  commit: 8f16e1ab1ddc16892f52ae1dd6a6b3538ba72c7c
+  commit: f8a6b713982e7add4400b2471fde9d8fdef40add
 

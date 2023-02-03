@@ -7,7 +7,7 @@ import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
 import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
     filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
-import SequenceFormats.Plink (writePlink)
+import SequenceFormats.Plink (writePlink, PlinkPopNameMode(..))
 
 import Control.Applicative ((<|>))
 import Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
@@ -150,7 +150,9 @@ argParser = ProgOpt <$> parseCallingMode
         \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
         \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
-    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix) <|> (PlinkFormat <$> parsePlinkPrefix) <|> pure FreqSumFormat
+    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix) <|>
+        (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode) <|>
+        pure FreqSumFormat
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
@@ -165,6 +167,14 @@ argParser = ProgOpt <$> parseCallingMode
         \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
         \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
         \is useful for testing your pipeline, since it's output to standard out")
+    parsePlinkPopMode = parsePlinkPopFamily <|> parsePlinkPopPhenotype <|> parsePlinkPopBoth
+    parsePlinkPopFamily = OP.flag' PlinkPopNameAsFamily (OP.long "popNameAsFamily" <> OP.help "Only valid for Plink Output: \
+        \Write the population name into the first column of the fam file, as a Family-ID according to the Plink Spec.")
+    parsePlinkPopPhenotype = OP.flag' PlinkPopNameAsPhenotype (OP.long "popNameAsPhenotype" <> OP.help "Only valid for Plink Output: \
+        \Write the population name into the last column of the fam file, as a Phenotype according to the Plink Spec.")
+    parsePlinkPopBoth = OP.flag' PlinkPopNameAsBoth (OP.long "popNameAsBoth" <> OP.help "Only valid for Plink Output: \
+        \Write the population name into both the first and last column of the fam file, so both as Family-ID and as a \
+        \Phenotype according to the Plink Spec.")
     parseSampleNames = parseSampleNameList <|> parseSampleNameFile
     parseSampleNameList = OP.option (Left . splitOn "," <$> OP.str)
         (OP.long "sampleNames" <> OP.metavar "NAME1,NAME2,..." <>
@@ -228,7 +238,7 @@ runMain = do
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
         EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
-        PlinkFormat outPrefix -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
+        PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
     outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
