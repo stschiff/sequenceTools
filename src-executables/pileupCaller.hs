@@ -27,7 +27,7 @@ import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data OutFormat = EigenstratFormat FilePath | PlinkFormat FilePath | FreqSumFormat deriving (Show)
+data OutFormat = EigenstratFormat FilePath | PlinkFormat FilePath PlinkPopNameMode | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt {
     optCallingMode :: CallingMode,
