@@ -167,14 +167,13 @@ argParser = ProgOpt <$> parseCallingMode
         \If not set, output will be FreqSum (Default). Note that freqSum format, described at \
         \https://rarecoal-docs.readthedocs.io/en/latest/rarecoal-tools.html#vcf2freqsum, \
         \is useful for testing your pipeline, since it's output to standard out")
-    parsePlinkPopMode = parsePlinkPopFamily <|> parsePlinkPopPhenotype <|> parsePlinkPopBoth
-    parsePlinkPopFamily = OP.flag' PlinkPopNameAsFamily (OP.long "popNameAsFamily" <> OP.help "Only valid for Plink Output: \
-        \Write the population name into the first column of the fam file, as a Family-ID according to the Plink Spec.")
+    parsePlinkPopMode = parsePlinkPopPhenotype <|> parsePlinkPopBoth <|> pure PlinkPopNameAsFamily
     parsePlinkPopPhenotype = OP.flag' PlinkPopNameAsPhenotype (OP.long "popNameAsPhenotype" <> OP.help "Only valid for Plink Output: \
-        \Write the population name into the last column of the fam file, as a Phenotype according to the Plink Spec.")
+        \Write the population name into the last column of the fam file, as a Phenotype according to the Plink Spec. \
+        \By default, the population name is specified as the first column only (family name in the Plink spec)")
     parsePlinkPopBoth = OP.flag' PlinkPopNameAsBoth (OP.long "popNameAsBoth" <> OP.help "Only valid for Plink Output: \
         \Write the population name into both the first and last column of the fam file, so both as Family-ID and as a \
-        \Phenotype according to the Plink Spec.")
+        \Phenotype according to the Plink Spec. By default, the population name is specified only as the first column (family name in the Plink spec)")
     parseSampleNames = parseSampleNameList <|> parseSampleNameFile
     parseSampleNameList = OP.option (Left . splitOn "," <$> OP.str)
         (OP.long "sampleNames" <> OP.metavar "NAME1,NAME2,..." <>
