@@ -7,7 +7,7 @@ import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
 import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat)
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
     filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
-import SequenceFormats.Plink (writePlink, PlinkPopNameMode(..))
+import SequenceFormats.Plink (writePlink, PlinkPopNameMode(..), eigenstratInd2PlinkFam)
 
 import Control.Applicative ((<|>))
 import Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
@@ -29,17 +29,17 @@ import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 data OutFormat = EigenstratFormat FilePath | PlinkFormat FilePath PlinkPopNameMode | FreqSumFormat deriving (Show)
 
-data ProgOpt = ProgOpt {
-    optCallingMode :: CallingMode,
-    optKeepInCongruentReads :: Bool,
-    optSeed :: Maybe Int,
-    optMinDepth :: Int,
-    optTransitionsMode :: TransitionsMode,
-    optSnpFile :: FilePath,
-    optOutFormat :: OutFormat,
-    optSampleNames :: Either [String] FilePath,
-    optPopName :: String
-}
+data ProgOpt = ProgOpt
+    CallingMode                -- optCallingMode
+    Bool                       -- optKeepInCongruentReads
+    (Maybe Int)                -- optSeed
+    Int                        -- optMinDepth
+    TransitionsMode            -- optTransitionsMode
+    FilePath                   -- optSnpFile
+    OutFormat                  -- optOutFormat
+    (Either [String] FilePath) -- optSampleNames
+    String                     -- optPopName
+
 
 data ReadStats = ReadStats {
     rsTotalSites :: IORef Int,
@@ -237,8 +237,8 @@ runMain = do
     popName <- asks envPopName
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popName False freqSumProducer
-        PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popName True freqSumProducer
+        EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popName Nothing freqSumProducer
+        PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popName (Just popNameMode) freqSumProducer
     outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
@@ -315,8 +315,8 @@ outputFreqSum freqSumProducer = do
         outProd = freqSumProducer >-> filterTransitions transitionsOnly
     lift . runEffect $ outProd >-> printFreqSumStdOut header'
 
-outputEigenStratOrPlink :: FilePath -> String -> Bool -> Producer FreqSumEntry (SafeT IO) () -> App ()
-outputEigenStratOrPlink outPrefix popName formatIsPlink freqSumProducer = do
+outputEigenStratOrPlink :: FilePath -> String -> Maybe PlinkPopNameMode -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputEigenStratOrPlink outPrefix popName maybePlinkPopMode freqSumProducer = do
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
     callingMode <- asks envCallingMode
@@ -324,15 +324,18 @@ outputEigenStratOrPlink outPrefix popName formatIsPlink freqSumProducer = do
             RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
-    let [snpOut, indOut, genoOut] =
-            if formatIsPlink
-            then map (outPrefix <>) [".bim", ".fam", ".bed"]
-            else map (outPrefix <>) [".snp", ".ind", ".geno"]
-    let writeFunc = if formatIsPlink then writePlink else writeEigenstrat
+    let [snpOut, indOut, genoOut] = case maybePlinkPopMode of
+            Just _  -> map (outPrefix <>) [".bim", ".fam", ".bed"]
+            Nothing -> map (outPrefix <>) [".snp", ".ind", ".geno"]
     let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
+    let writeFunc = case maybePlinkPopMode of
+            Nothing -> (\g s i -> writeEigenstrat g s i indEntries)
+            Just popMode ->
+                let famEntries = map (eigenstratInd2PlinkFam popMode) indEntries
+                in  (\g s i -> writePlink g s i famEntries)
     lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
                 P.map (freqSumToEigenstrat diploidizeCall) >->
-                writeFunc genoOut snpOut indOut indEntries
+                writeFunc genoOut snpOut indOut
 
 outputStats :: App ()
 outputStats = do
