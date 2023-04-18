@@ -323,9 +323,9 @@ outputEigenStratOrPlink outPrefix popName maybePlinkPopMode freqSumProducer = do
             RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
-    let [snpOut, indOut, genoOut] = case maybePlinkPopMode of
-            Just _  -> map (outPrefix <>) [".bim", ".fam", ".bed"]
-            Nothing -> map (outPrefix <>) [".snp", ".ind", ".geno"]
+    let (snpOut, indOut, genoOut) = case maybePlinkPopMode of
+            Just _  -> (outPrefix <> ".bim", outPrefix <> ".fam", outPrefix <> ".bed")
+            Nothing -> (outPrefix <> ".snp", outPrefix <> ".ind", outPrefix <> ".geno")
     let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
     let writeFunc = case maybePlinkPopMode of
             Nothing -> (\g s i -> writeEigenstrat g s i indEntries)
