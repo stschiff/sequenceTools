@@ -1,8 +1,8 @@
-resolver: lts-18.28
+resolver: lts-21.17
 packages:
 - '.'
 extra-deps:
-- sequence-formats-1.7.0
-# - git: https://github.com/stschiff/sequence-formats
-#   commit: 680a8b33229118a446a8c286a0b07153a45c30bd
+# - sequence-formats-1.7.0
+- git: https://github.com/stschiff/sequence-formats
+  commit: 88dc6f598d2152929e8e9e6ed371487954f26c1e
 
