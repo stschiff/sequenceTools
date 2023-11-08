@@ -38,22 +38,19 @@ argParser = ProgOpt <$> parseSnpPosFile <*> parseOutPrefix
                    (OP.long "snpFile" <> OP.short 'f' <> OP.value Nothing <> OP.metavar "<FILE>" <>
                     OP.help "specify an Eigenstrat SNP file with the positions and alleles of a \
                              \reference set. If this option is given, only positions that are both in the SNP file \
-                             \and in the VCF will be output. Without this option, all sites in the VCF will be output. \
-                             \WARNING: Sites that are not in the VCF will not be output, and this is new behaviour. \
-                             \Previously one could specify that they will be output as missing or hom-ref, but that \
-                             \feature was recently removed. I plan to implement this behaviour in the future in a new eigenstrat-merging tool.")
+                             \and in the VCF will be output. Without this option, all sites in the VCF will be output")
     parseOutPrefix = OP.strOption (OP.long "outPrefix" <> OP.short 'e' <>
                                   OP.metavar "<FILE_PREFIX>" <>
-                                  OP.help "specify the filenames for the EigenStrat SNP and IND \
-                                  \file outputs: <FILE_PREFIX>.snp.txt and <FILE_PREFIX>.ind.txt")
+                                  OP.help "specify the prefix for the EigenStrat output files. Output files will then be  \
+                                  \<FILE_PREFIX>.geno, <FILE_PREFIX>.snp and <FILE_PREFIX>.ind")
 
 runMain :: ProgOpt -> IO ()
 runMain (ProgOpt maybeSnpPosFile outPrefix) =
     runSafeT $ do
         (vcfHeader, vcfBody) <- readVCFfromStdIn
-        let snpOut = outPrefix ++ ".snp.txt"
-            indOut = outPrefix ++ ".ind.txt"
-            genoOut = outPrefix ++ ".geno.txt"
+        let snpOut = outPrefix ++ ".snp"
+            indOut = outPrefix ++ ".ind"
+            genoOut = outPrefix ++ ".geno"
             VCFheader _ sampleNames = vcfHeader
             nrInds = length sampleNames
             indEntries = [EigenstratIndEntry n Unknown "Unknown" | n <- sampleNames]
