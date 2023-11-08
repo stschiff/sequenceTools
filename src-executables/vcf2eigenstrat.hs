@@ -102,6 +102,6 @@ runSimple :: (MonadIO m) => Producer VCFentry m r -> Producer FreqSumEntry m r
 runSimple vcfBody = for vcfBody $ \e -> do
     case vcfToFreqSumEntry e of
         Right e' -> do
-            liftIO . B.putStr . freqSumEntryToText $ e'
+            --liftIO . B.putStr . freqSumEntryToText $ e'
             yield e'
         Left err -> (liftIO . throwIO) (AssertionFailed err)
