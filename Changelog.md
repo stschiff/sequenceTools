@@ -1,5 +1,6 @@
 # Changelog
 
+- V 1.5.3.2: fixed a bug in vcf2eigenstrat that would fail on VCFs with missing Quality values.
 - V 1.5.3.1: updated to latest GHC pedantic compilation
 - V 1.5.3: Upgraded to sequence-formats 1.7.0 introducing an option for plink popName encoding, and improved pileup-Parsing to allow for skip-reference characters
 - V 1.5.2: Fixed a bug with --samplePopName having to be entered after -p or -e. Fixed a bug in the sequence-formats dependency.
