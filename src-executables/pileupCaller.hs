@@ -247,7 +247,7 @@ runMain = do
         FreqSumFormat -> outputFreqSum freqSumProducer
         EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popNames Nothing freqSumProducer
         PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popNames (Just popNameMode) freqSumProducer
-    --outputStats
+    outputStats
 
 pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
 pileupToFreqSum pileupProducer = do
@@ -304,8 +304,8 @@ addOneSite readStats = modifyIORef' (rsTotalSites readStats) (+1)
 
 updateStatsAllSamples :: ReadStats -> [Int] -> [Int] -> [Int] -> IO ()
 updateStatsAllSamples readStats rawBaseCounts damageCleanedBaseCounts congruencyCleanedBaseCounts = do
-    let n = V.length (rsRawReads readStats)
-    when (length rawBaseCounts /= n) $
+    let nSamples = V.length (rsRawReads readStats)
+    when (length rawBaseCounts /= nSamples) $
         throwIO (UserInputException "number of individuals specified differs from number of individuals in the pileup input")
     sequence_ [V.modify (rsRawReads readStats) (+n) i | (i, n) <- zip [0..] rawBaseCounts]
     sequence_ [V.modify (rsReadsCleanedSS readStats) (+n) i | (i, n) <- zip [0..] damageCleanedBaseCounts]

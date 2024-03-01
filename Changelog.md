@@ -1,5 +1,10 @@
 # Changelog
 
+- V 1.5.4.0:
+   - updated sequence-formats dependency allows more lenient parsing of pileup-data, now also allowing for arbitrary reference alleles (not just ACTGN). This won't affect calling (sites where the pileup-reference is something different from the SNP-file input are declared missing), but will be less disruptive when parsing pileup-input.
+   - improved error output for parsing problems with pileup-format data. Now only a small part of the problematic chunk is output, hopefully easing error interpretation in such cases
+   - output a useful error message if the number of samples passed in --sampleNames is inconsistent with the pileup-input
+   - `--samplePopName` now accepts multiple pop-names, separated by comma. The number of pop-names must then match the number of samples.
 - V 1.5.3.2: fixed a bug in vcf2eigenstrat that would fail on VCFs with missing Quality values.
 - V 1.5.3.1: updated to latest GHC pedantic compilation
 - V 1.5.3: Upgraded to sequence-formats 1.7.0 introducing an option for plink popName encoding, and improved pileup-Parsing to allow for skip-reference characters

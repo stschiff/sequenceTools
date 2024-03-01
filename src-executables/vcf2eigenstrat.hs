@@ -5,7 +5,7 @@ import SequenceFormats.VCF (readVCFfromStdIn, VCFheader(..), VCFentry(..),
                      isBiallelicSnp, getDosages, vcfToFreqSumEntry)
 import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat,
     Sex(..), EigenstratIndEntry(..))
-import SequenceFormats.FreqSum (FreqSumEntry(..), freqSumEntryToText)
+import SequenceFormats.FreqSum (FreqSumEntry(..))
 
 import SequenceTools.Utils (versionInfoText, versionInfoOpt, freqSumToEigenstrat)
 
