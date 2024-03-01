@@ -4,7 +4,7 @@
 1	842013	T	2	.,	II	11	,.,.,..,,,.	IIIIIIIIIII	6	,.,,,,	IIIIII	0	*	*
 1	846864	G	3	,,.	III	8	.,,.,.,.	IIIIIIII	8	.,,..,,,	IIIIIIII	1	,	I
 1	869303	C	2	TT	II	1	^FT	I	2	.,	II	0	*	*
-1	891021	G	0	*	*	7	aaaAAaa	IIIIIII	7	aAAAaAa	IIIIIII	0	*	*
+1	891021	R	0	*	*	7	aaaAAaa	IIIIIII	7	aAAAaAa	IIIIIII	0	*	*
 1	896271	C	0	*	*	1	t	I	0	*	*	0	*	*
 1	903426	C	1	,	I	10	T.,,t,t.,t	GIIIIIIIII	1	,	I	1	.	I
 1	914852	G	0	*	*	1	.	I	1	C	I	0	*	*

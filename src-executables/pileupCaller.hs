@@ -4,16 +4,18 @@ import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..)
     EigenstratIndEntry(..), Sex(..), writeEigenstrat)
 import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
 import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
-import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat)
+import SequenceFormats.Utils (SeqFormatException(..))
+import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat, UserInputException(..))
 import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
     filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
 import SequenceFormats.Plink (writePlink, PlinkPopNameMode(..), eigenstratInd2PlinkFam)
 
 import Control.Applicative ((<|>))
+import Control.Exception (catch, throwIO)
 import Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Data.IORef (IORef, readIORef, modifyIORef', newIORef)
 import Data.List.Split (splitOn)
 import qualified Data.Vector.Unboxed.Mutable as V
@@ -70,7 +72,9 @@ main :: IO ()
 main = do
     args <- OP.execParser parserInfo
     env <- initialiseEnvironment args
-    runSafeT $ runReaderT runMain env
+    let handler = \(SeqFormatException msg) -> do
+            throwIO $ SeqFormatException (take 200 msg)
+    catch (runSafeT $ runReaderT runMain env) handler
 
 parserInfo :: OP.ParserInfo ProgOpt
 parserInfo = OP.info (pure (.) <*> versionInfoOpt <*> OP.helper <*> argParser)
@@ -238,7 +242,7 @@ runMain = do
         FreqSumFormat -> outputFreqSum freqSumProducer
         EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popName Nothing freqSumProducer
         PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popName (Just popNameMode) freqSumProducer
-    outputStats
+    --outputStats
 
 pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
     App (Producer FreqSumEntry (SafeT IO) ())
@@ -295,6 +299,9 @@ addOneSite readStats = modifyIORef' (rsTotalSites readStats) (+1)
 
 updateStatsAllSamples :: ReadStats -> [Int] -> [Int] -> [Int] -> IO ()
 updateStatsAllSamples readStats rawBaseCounts damageCleanedBaseCounts congruencyCleanedBaseCounts = do
+    let n = V.length (rsRawReads readStats)
+    when (length rawBaseCounts /= n) $
+        throwIO (UserInputException "number of individuals specified differs from number of individuals in the pileup input")
     sequence_ [V.modify (rsRawReads readStats) (+n) i | (i, n) <- zip [0..] rawBaseCounts]
     sequence_ [V.modify (rsReadsCleanedSS readStats) (+n) i | (i, n) <- zip [0..] damageCleanedBaseCounts]
     sequence_ [V.modify (rsReadsCongruent readStats) (+n) i | (i, n) <- zip [0..] congruencyCleanedBaseCounts]

@@ -1,17 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 module SequenceTools.Utils (versionInfoOpt, versionInfoText, sampleWithoutReplacement,
-    freqSumToEigenstrat, dosageToEigenstratGeno) where 
+    freqSumToEigenstrat, dosageToEigenstratGeno, UserInputException(..)) where 
 
 import SequenceFormats.FreqSum (FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), GenoLine, GenoEntry(..))
 import SequenceFormats.Utils (Chrom(..))
 
+import Control.Exception (Exception)
 import qualified Data.ByteString.Char8 as B
 import Data.Vector (fromList)
 import Data.Version (showVersion)
 import qualified Options.Applicative as OP
 import Paths_sequenceTools (version)
 import System.Random (randomRIO)
+
+data UserInputException = UserInputException String deriving (Show)
+instance Exception UserInputException
 
 versionInfoOpt :: OP.Parser (a -> a)
 versionInfoOpt = OP.infoOption (showVersion version) (OP.long "version" <> OP.help "Print version and exit")
