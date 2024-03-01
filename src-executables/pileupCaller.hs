@@ -32,15 +32,15 @@ import qualified Text.PrettyPrint.ANSI.Leijen as PP
 data OutFormat = EigenstratFormat FilePath | PlinkFormat FilePath PlinkPopNameMode | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt
-    CallingMode                -- optCallingMode
-    Bool                       -- optKeepInCongruentReads
-    (Maybe Int)                -- optSeed
-    Int                        -- optMinDepth
-    TransitionsMode            -- optTransitionsMode
-    FilePath                   -- optSnpFile
-    OutFormat                  -- optOutFormat
-    (Either [String] FilePath) -- optSampleNames
-    String                     -- optPopName
+    CallingMode                
+    Bool                       -- wether to keep incongruent reads
+    (Maybe Int)                -- optional seed
+    Int                        -- minimal depth 
+    TransitionsMode            
+    FilePath                   -- snpFile
+    OutFormat                  
+    (Either [String] FilePath) -- list of sample names or file with sample names
+    (Either String [String])   -- single pop-name or list of popnames
 
 
 data ReadStats = ReadStats {
@@ -59,7 +59,7 @@ data Env = Env {
     envOutFormat :: OutFormat,
     envSnpFile :: FilePath,
     envSampleNames :: [String],
-    envPopName :: String,
+    envPopName :: Either String [String],
     envStats :: ReadStats
 }
 
@@ -185,11 +185,13 @@ argParser = ProgOpt <$> parseCallingMode
     parseSampleNameFile = OP.option (Right <$> OP.str) (OP.long "sampleNameFile" <> OP.metavar "<FILE>" <>
         OP.help "give the names of the samples in a file with one name per \
         \line")
-    parsePopName = OP.strOption (OP.long "samplePopName" <> OP.value "Unknown" <> OP.showDefault <>
-        OP.metavar "POP" <>
-        OP.help "specify the population name of the samples, which is included\
+    parsePopName = OP.option (processPopNames . splitOn "," <$> OP.str) (OP.long "samplePopName" <> OP.value (Left "Unknown") <> OP.showDefault <>
+        OP.metavar "POP(s)" <>
+        OP.help "specify the population name(s) of the samples, which are included\
         \ in the output *.ind.txt file in Eigenstrat output. This will be ignored if the output \
-        \format is not Eigenstrat")
+        \format is not Eigenstrat. If a single name is given, it is applied to all samples, if multiple are given, their number must match the \
+        \the number of samples")
+    processPopNames names = if length names == 1 then Left (head names) else Right names
 
 programHelpDoc :: PP.Doc
 programHelpDoc =
@@ -234,19 +236,22 @@ initialiseEnvironment args = do
 runMain :: App ()
 runMain = do
     let pileupProducer = readPileupFromStdIn
-    snpFile <- asks envSnpFile
-    freqSumProducer <- pileupToFreqSum snpFile pileupProducer
+    freqSumProducer <- pileupToFreqSum pileupProducer
     outFormat <- asks envOutFormat
-    popName <- asks envPopName
+    popNameSpec <- asks envPopName
+    n <- length <$> asks envSampleNames
+    let popNames = case popNameSpec of
+            Left singlePopName -> replicate n singlePopName
+            Right p -> if length p /= n then error "number of specified populations must equal sample size" else p
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popName Nothing freqSumProducer
-        PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popName (Just popNameMode) freqSumProducer
+        EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popNames Nothing freqSumProducer
+        PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popNames (Just popNameMode) freqSumProducer
     --outputStats
 
-pileupToFreqSum :: FilePath -> Producer PileupRow (SafeT IO) () ->
-    App (Producer FreqSumEntry (SafeT IO) ())
-pileupToFreqSum snpFileName pileupProducer = do
+pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
+pileupToFreqSum pileupProducer = do
+    snpFileName <- asks envSnpFile
     nrSamples <- length <$> asks envSampleNames
     let snpProdOrderChecked =
             readEigenstratSnpFile snpFileName >-> orderCheckPipe cmpSnpPos
@@ -321,8 +326,8 @@ outputFreqSum freqSumProducer = do
         outProd = freqSumProducer >-> filterTransitions transitionsOnly
     lift . runEffect $ outProd >-> printFreqSumStdOut header'
 
-outputEigenStratOrPlink :: FilePath -> String -> Maybe PlinkPopNameMode -> Producer FreqSumEntry (SafeT IO) () -> App ()
-outputEigenStratOrPlink outPrefix popName maybePlinkPopMode freqSumProducer = do
+outputEigenStratOrPlink :: FilePath -> [String] -> Maybe PlinkPopNameMode -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputEigenStratOrPlink outPrefix popNames maybePlinkPopMode freqSumProducer = do
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
     callingMode <- asks envCallingMode
@@ -333,7 +338,7 @@ outputEigenStratOrPlink outPrefix popName maybePlinkPopMode freqSumProducer = do
     let (snpOut, indOut, genoOut) = case maybePlinkPopMode of
             Just _  -> (outPrefix <> ".bim", outPrefix <> ".fam", outPrefix <> ".bed")
             Nothing -> (outPrefix <> ".snp", outPrefix <> ".ind", outPrefix <> ".geno")
-    let indEntries = [EigenstratIndEntry n Unknown popName | n <- sampleNames]
+    let indEntries = [EigenstratIndEntry n Unknown p | (n, p) <- zip sampleNames popNames]
     let writeFunc = case maybePlinkPopMode of
             Nothing -> (\g s i -> writeEigenstrat g s i indEntries)
             Just popMode ->
