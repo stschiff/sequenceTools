@@ -44,8 +44,14 @@ jobs:
   #         bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
   #       done
   
-  build-on-mac:
-    runs-on: macos-latest
+  build:
+    needs: [create_release]
+    name: ${{ matrix.os }}/GHC ${{ matrix.ghc }}/${{ github.ref_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest,windows-latest,ubuntu-latest]
+        ghc: ["9.4.7"]
     steps:
     
     - name: Checkout repo
@@ -61,7 +67,7 @@ jobs:
     
     - name: Rename binaries
       run: |
-        for TOOL in genoStats pileupCaller vcf2eigenstrat; do cp ~/.local/bin/$TOOL $TOOL-macOS; done
+        for TOOL in genoStats pileupCaller vcf2eigenstrat; do cp ~/.local/bin/$TOOL $TOOL-$RUNNER_OS; done
 
     - name: Upload Release Asset
       id: upload-release-asset
@@ -71,6 +77,6 @@ jobs:
         draft: true
         allowUpdates: true
         artifactErrorsFailBuild: true
-        artifacts: "genoStats-macOS,pileupCaller-macOS,vcf2eigenstrat-macOS"
+        artifacts: "genoStats-$RUNNER_OS,pileupCaller-$RUNNER_OS,vcf2eigenstrat-$RUNNER_OS"
         artifactContentType: application/octet-stream
     
