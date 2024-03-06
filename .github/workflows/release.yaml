@@ -9,15 +9,19 @@ jobs:
     steps:
     - name: Checkout repo
       uses: actions/checkout@v2
+    
     - name: Build Docker image
       run: docker build -t linux -f Dockerfile.linux .
+    
     - name: Create container
       run: docker create --name linuxcontainer linux
+    
     - name: Copy executable
       run: |
         for TOOL in genoStats pileupCaller vcf2eigenstrat; do
           docker cp linuxcontainer:/root/.local/bin/$TOOL $TOOL-linux
         done
+    
     - name: update-release
       run: |
         for TOOL in genoStats pileupCaller vcf2eigenstrat; do
@@ -26,17 +30,30 @@ jobs:
   build-on-mac:
     runs-on: macos-latest
     steps:
+    
     - name: Checkout repo
       uses: actions/checkout@v2
+    
     - name: Setup Haskell
       uses: haskell/actions/setup@v1
       with:
         enable-stack: true
+    
     - name: Build
       run: stack install
-    - name: Update-release
+    
+    - name: Rename binaries
       run: |
-        for TOOL in genoStats pileupCaller vcf2eigenstrat; do
-          cp ~/.local/bin/$TOOL $TOOL-macOS
-          bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-macOS
-        done
+        for TOOL in genoStats pileupCaller vcf2eigenstrat; do cp ~/.local/bin/$TOOL $TOOL-macOS; done
+
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: ncipollo/release-action@v1
+      with:
+        name: Release ${{ github.ref_name }}
+        draft: true
+        allowUpdates: true
+        artifactErrorsFailBuild: true
+        artifacts: "genoStats-macOS,pileupCaller-macOS,vcf2eigenstrat-macOS"
+        artifactContentType: application/octet-stream
+    
