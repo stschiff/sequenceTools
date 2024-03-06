@@ -44,7 +44,7 @@ jobs:
   #         bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
   #       done
   
-  build:
+  build-on-mac-and-linux:
     needs: [create_release]
     name: ${{ matrix.os }}/${{ github.ref_name }}
     runs-on: ${{ matrix.os }}
@@ -69,9 +69,13 @@ jobs:
     - name: Build
       run: stack install --system-ghc
     
-    - name: Rename binaries
-      run: |
-        for TOOL in genoStats pileupCaller vcf2eigenstrat; do mv ~/.local/bin/$TOOL ~/.local/bin/$TOOL-$RUNNER_OS; done
+    - name: Rename binaries (not windows)
+      if: ${{ matrix.os != "windows-latest" }}
+      run: for TOOL in genoStats pileupCaller vcf2eigenstrat; do mv ~/.local/bin/$TOOL ~/.local/bin/$TOOL-$RUNNER_OS; done
+
+    - name: Rename binaries (windows)
+      if: ${{ matrix.os == "windows-latest" }}
+      run: for %%i in (genoStats pileupCaller vcf2eigenstrat) do ren "%USERPROFILE%\.local\bin\%%i" "%%i-windows"
 
     - name: Upload Release Asset
       id: upload-release-asset
@@ -83,4 +87,3 @@ jobs:
         artifactErrorsFailBuild: true
         artifacts: "~/.local/bin/*"
         artifactContentType: application/octet-stream
-    
