@@ -48,7 +48,10 @@ jobs:
     needs: [create_release]
     name: ${{ matrix.os }}/GHC ${{ matrix.ghc }}/${{ github.ref_name }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     strategy:
+      fail-fast: false
+
       matrix:
         os: [macos-latest,ubuntu-latest]
         ghc: ["9.4.7"]
@@ -67,7 +70,7 @@ jobs:
     
     - name: Rename binaries
       run: |
-        for TOOL in genoStats pileupCaller vcf2eigenstrat; do cp ~/.local/bin/$TOOL $TOOL-$RUNNER_OS; done
+        for TOOL in genoStats pileupCaller vcf2eigenstrat; do mv ~/.local/bin/$TOOL ~/.local/bin/$TOOL-$RUNNER_OS; done
 
     - name: Upload Release Asset
       id: upload-release-asset
@@ -77,6 +80,6 @@ jobs:
         draft: true
         allowUpdates: true
         artifactErrorsFailBuild: true
-        artifacts: "genoStats-$RUNNER_OS,pileupCaller-$RUNNER_OS,vcf2eigenstrat-$RUNNER_OS"
+        artifacts: "~/.local/bin/*"
         artifactContentType: application/octet-stream
     
