@@ -70,11 +70,11 @@ jobs:
       run: stack install --system-ghc
     
     - name: Rename binaries (not windows)
-      if: ${{ matrix.os != "windows-latest" }}
+      if: ${{ matrix.os != 'windows-latest' }}
       run: for TOOL in genoStats pileupCaller vcf2eigenstrat; do mv ~/.local/bin/$TOOL ~/.local/bin/$TOOL-$RUNNER_OS; done
 
     - name: Rename binaries (windows)
-      if: ${{ matrix.os == "windows-latest" }}
+      if: ${{ matrix.os == 'windows-latest' }}
       run: for %%i in (genoStats pileupCaller vcf2eigenstrat) do ren "%USERPROFILE%\.local\bin\%%i" "%%i-windows"
 
     - name: Upload Release Asset
