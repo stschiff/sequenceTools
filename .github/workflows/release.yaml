@@ -1,9 +1,25 @@
 name: Release
 on:
-  release:
-    types: [created]
+  # Trigger the workflow on the new 'v*' tag created
+  push:
+    tags:
+      - "v*"
 
 jobs:
+  create_release:
+    name: Create Github Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: true
+
   # build-on-centos:
   #   runs-on: ubuntu-latest
   #   steps:
@@ -27,6 +43,7 @@ jobs:
   #       for TOOL in genoStats pileupCaller vcf2eigenstrat; do
   #         bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
   #       done
+  
   build-on-mac:
     runs-on: macos-latest
     steps:
