@@ -46,27 +46,28 @@ jobs:
   
   build:
     needs: [create_release]
-    name: ${{ matrix.os }}/GHC ${{ matrix.ghc }}/${{ github.ref_name }}
+    name: ${{ matrix.os }}/${{ github.ref_name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     strategy:
       fail-fast: false
-
       matrix:
         os: [macos-latest,ubuntu-latest]
-        ghc: ["9.4.7"]
+    
     steps:
     
     - name: Checkout repo
       uses: actions/checkout@v2
     
     - name: Setup Haskell
-      uses: haskell/actions/setup@v1
+      uses: haskell-actions/setup@v2
       with:
+        ghc-version: "9.4.7"
         enable-stack: true
+        stack-version: "latest"
     
     - name: Build
-      run: stack install
+      run: stack install --system-ghc
     
     - name: Rename binaries
       run: |
