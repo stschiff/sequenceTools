@@ -44,7 +44,7 @@ jobs:
   #         bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
   #       done
   
-  build-on-mac-and-linux:
+  build:
     needs: [create_release]
     name: ${{ matrix.os }}/${{ github.ref_name }}
     runs-on: ${{ matrix.os }}
@@ -75,7 +75,7 @@ jobs:
 
     - name: Rename binaries (windows)
       if: ${{ matrix.os == 'windows-latest' }}
-      run: for %%i in (genoStats pileupCaller vcf2eigenstrat) do ren "%USERPROFILE%\.local\bin\%%i" "%%i-windows"
+      run: foreach ($tool in "genoStats", "pileupCaller", "vcf2eigenstrat") { Rename-Item "$env:USERPROFILE\.local\bin\$tool" "$tool-windows" }
 
     - name: Upload Release Asset
       id: upload-release-asset
