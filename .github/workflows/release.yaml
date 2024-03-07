@@ -75,7 +75,7 @@ jobs:
 
     - name: Rename binaries (windows)
       if: ${{ matrix.os == 'windows-latest' }}
-      run: foreach ($tool in "genoStats", "pileupCaller", "vcf2eigenstrat") { Rename-Item "$env:USERPROFILE\.local\bin\$tool" "$tool-windows" }
+      run: foreach ($tool in "genoStats", "pileupCaller", "vcf2eigenstrat") { Rename-Item "$env:USERPROFILE\AppData\Roaming\local\bin\$tool" "$tool-windows" }
 
     - name: Upload Release Asset
       id: upload-release-asset
