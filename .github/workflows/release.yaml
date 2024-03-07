@@ -99,5 +99,5 @@ jobs:
         draft: true
         allowUpdates: true
         artifactErrorsFailBuild: true
-        artifacts: '%userprofile%\AppData\Roaming\local\bin\*.exe'
+        artifacts: '~/AppData/Roaming/local/bin/*.exe'
         artifactContentType: application/octet-stream
