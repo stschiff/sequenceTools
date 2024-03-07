@@ -81,7 +81,6 @@ jobs:
         foreach ($tool in "genoStats", "pileupCaller", "vcf2eigenstrat") { Rename-Item "$env:USERPROFILE\AppData\Roaming\local\bin\$tool.exe" "$tool-windows.exe" }
 
     - name: Upload Release Asset (not windows)
-      id: upload-release-asset
       uses: ncipollo/release-action@v1
       if: ${{ matrix.os != 'windows-latest' }}
       with:
@@ -93,7 +92,6 @@ jobs:
         artifactContentType: application/octet-stream
 
     - name: Upload Release Asset (windows)
-      id: upload-release-asset
       uses: ncipollo/release-action@v1
       if: ${{ matrix.os == 'windows-latest' }}
       with:
