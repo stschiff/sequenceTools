@@ -1,7 +1,7 @@
 # Changelog
 
 - V 1.5.4.0:
-   - updated sequence-formats dependency allows more lenient parsing of pileup-data, now also allowing for arbitrary reference alleles (not just ACTGN). This won't affect calling (sites where the pileup-reference is something different from the SNP-file input are declared missing), but will be less disruptive when parsing pileup-input.
+   - updated sequence-formats dependency allows more lenient parsing of pileup-data, now also allowing for arbitrary reference alleles (not just ACTGN). This won't affect calling (reads that support an allele that is not in the SNP-file input are treated as before), but will be less disruptive when parsing pileup-input, for example without a bed-file in samtools.
    - improved error output for parsing problems with pileup-format data. Now only a small part of the problematic chunk is output, hopefully easing error interpretation in such cases
    - output a useful error message if the number of samples passed in --sampleNames is inconsistent with the pileup-input
    - `--samplePopName` now accepts multiple pop-names, separated by comma. The number of pop-names must then match the number of samples.
