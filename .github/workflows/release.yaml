@@ -1,4 +1,5 @@
 name: Release
+
 on:
   # Trigger the workflow on the new 'v*' tag created
   push:
@@ -20,84 +21,92 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: true
 
-  # build-on-centos:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #   - name: Checkout repo
-  #     uses: actions/checkout@v2
-    
-  #   - name: Build Docker image
-  #     run: docker build -t linux -f Dockerfile.linux .
-    
-  #   - name: Create container
-  #     run: docker create --name linuxcontainer linux
-    
-  #   - name: Copy executable
-  #     run: |
-  #       for TOOL in genoStats pileupCaller vcf2eigenstrat; do
-  #         docker cp linuxcontainer:/root/.local/bin/$TOOL $TOOL-linux
-  #       done
-    
-  #   - name: update-release
-  #     run: |
-  #       for TOOL in genoStats pileupCaller vcf2eigenstrat; do
-  #         bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=stschiff repo=sequenceTools tag=$(basename $GITHUB_REF) filename=$TOOL-linux
-  #       done
-  
-  build:
+  build_normal_artifacts:
     needs: [create_release]
-    name: ${{ matrix.os }}/${{ github.ref_name }}
+    name: ${{ matrix.os }}/${{ github.ref }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: true
     strategy:
-      fail-fast: false
       matrix:
-        os: [macos-latest,ubuntu-20.04,windows-latest]
-    
+        os: [ubuntu-20.04, macOS-13, macOS-14, windows-latest]
+
     steps:
-    
-    - name: Checkout repo
-      uses: actions/checkout@v2
-    
-    - name: Setup Haskell
-      uses: haskell-actions/setup@v2
-      with:
-        ghc-version: "9.4.7"
-        enable-stack: true
-        stack-version: "latest"
-    
-    - name: Build
-      run: stack install --system-ghc
-    
-    - name: Rename binaries (not windows)
-      if: ${{ matrix.os != 'windows-latest' }}
-      run: for TOOL in genoStats pileupCaller vcf2eigenstrat; do mv ~/.local/bin/$TOOL ~/.local/bin/$TOOL-$RUNNER_OS; done
+      - name: Check out code
+        uses: actions/checkout@v4
 
-    - name: Rename binaries (windows)
-      if: ${{ matrix.os == 'windows-latest' }}
-      # stack on windows installs into <Home>\AppData\Roaming\local\bin
-      # the default shell on Windows is powershell, so we use that
-      run: |
-        foreach ($tool in "genoStats", "pileupCaller", "vcf2eigenstrat") { Rename-Item "$env:USERPROFILE\AppData\Roaming\local\bin\$tool.exe" "$tool-windows.exe" }
+      - name: Set tag name
+        uses: olegtarasov/get-tag@v2.1
+        id: tagName
+        with:
+          tagRegex: "v(.*)"
+          tagRegexGroup: 1
 
-    - name: Upload Release Asset (not windows)
-      uses: ncipollo/release-action@v1
-      if: ${{ matrix.os != 'windows-latest' }}
-      with:
-        name: Release ${{ github.ref_name }}
-        draft: true
-        allowUpdates: true
-        artifactErrorsFailBuild: true
-        artifacts: "~/.local/bin/*"
-        artifactContentType: application/octet-stream
+      - name: Install stack on macOS, where it is not present (https://github.com/freckle/stack-action/issues/80)
+        if: ${{ runner.os == 'macOS' }}
+        run: curl -sSL https://get.haskellstack.org/ | sh
 
-    - name: Upload Release Asset (windows)
-      uses: ncipollo/release-action@v1
-      if: ${{ matrix.os == 'windows-latest' }}
-      with:
-        name: Release ${{ github.ref_name }}
-        draft: true
-        allowUpdates: true
-        artifactErrorsFailBuild: true
-        artifacts: '~/AppData/Roaming/local/bin/*.exe'
-        artifactContentType: application/octet-stream
+      - name: Build executable
+        uses: freckle/stack-action@v5
+        id: stack
+        with:
+          test: false
+          stack-build-arguments: --copy-bins --ghc-options="-O2"
+
+      - name: Set binary path name
+        id: binarypath
+        run: |
+             if [ "$RUNNER_OS" == "Windows" ]; then
+                 newEXE="pileupCaller-$RUNNER_OS.exe"
+             elif [ "$RUNNER_OS" == "macOS" ]; then
+                 newEXE="pileupCaller-$RUNNER_OS-$RUNNER_ARCH"
+             else
+                 newEXE="pileupCaller-$RUNNER_OS"
+             fi
+             currentEXE="${{ steps.stack.outputs.local-bin }}/pileupCaller"
+             mv $currentEXE $newEXE
+             echo "BINARY_PATH=$newEXE" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Compress binary
+        if: ${{ runner.os != 'macOS' }} # upx is crashing for macOS Ventura or above!
+        uses: svenstaro/upx-action@v2
+        with:
+          files: ${{ steps.binarypath.outputs.BINARY_PATH }}
+
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: ncipollo/release-action@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: true
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: ${{ steps.binarypath.outputs.BINARY_PATH }}
+          artifactContentType: application/octet-stream
+
+  build_centos_artifact:
+    needs: [create_release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t linux -f .github/workflows/Dockerfile.centos .
+
+      - name: Create container
+        run: docker create --name linuxcontainer linux
+
+      - name: Copy executable
+        run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
+
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: ncipollo/release-action@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: true
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: pileupCaller-conda-linux
+          artifactContentType: application/octet-stream
