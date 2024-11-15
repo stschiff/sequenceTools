@@ -1,36 +1,54 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import SequenceFormats.Eigenstrat (readEigenstratSnpFile, EigenstratSnpEntry(..), 
-    EigenstratIndEntry(..), Sex(..), writeEigenstrat)
-import SequenceFormats.FreqSum(FreqSumEntry(..), printFreqSumStdOut, FreqSumHeader(..))
-import SequenceFormats.Pileup (PileupRow(..), readPileupFromStdIn)
-import SequenceFormats.Utils (SeqFormatException(..))
-import SequenceTools.Utils (versionInfoOpt, versionInfoText, freqSumToEigenstrat, UserInputException(..))
-import SequenceTools.PileupCaller (CallingMode(..), callGenotypeFromPileup, callToDosage,
-    filterTransitions, TransitionsMode(..), cleanSSdamageAllSamples)
-import SequenceFormats.Plink (writePlink, PlinkPopNameMode(..), eigenstratInd2PlinkFam)
+import           SequenceFormats.Eigenstrat   (EigenstratIndEntry (..),
+                                               EigenstratSnpEntry (..),
+                                               Sex (..), readEigenstratSnpFile,
+                                               writeEigenstrat)
+import           SequenceFormats.FreqSum      (FreqSumEntry (..),
+                                               FreqSumHeader (..),
+                                               printFreqSumStdOut)
+import           SequenceFormats.Pileup       (PileupRow (..),
+                                               readPileupFromStdIn)
+import           SequenceFormats.Plink        (PlinkPopNameMode (..),
+                                               eigenstratInd2PlinkFam,
+                                               writePlink)
+import           SequenceFormats.Utils        (SeqFormatException (..))
+import           SequenceTools.PileupCaller   (CallingMode (..),
+                                               TransitionsMode (..),
+                                               callGenotypeFromPileup,
+                                               callToDosage,
+                                               cleanSSdamageAllSamples,
+                                               filterTransitions)
+import           SequenceTools.Utils          (UserInputException (..),
+                                               freqSumToEigenstrat,
+                                               versionInfoOpt, versionInfoText)
 
-import Control.Applicative ((<|>))
-import Control.Exception (catch, throwIO)
-import Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad (forM_, when)
-import Data.IORef (IORef, readIORef, modifyIORef', newIORef)
-import Data.List.Split (splitOn)
-import qualified Data.Vector.Unboxed.Mutable as V
-import qualified Options.Applicative as OP
-import Pipes (yield, (>->), runEffect, Producer, for)
-import qualified Pipes.Prelude as P
-import Pipes.OrderedZip (orderedZip, orderCheckPipe)
-import Pipes.Safe (runSafeT, SafeT)
-import System.IO (hPutStrLn, stderr)
-import System.Random (mkStdGen, setStdGen)
-import Text.Printf (printf)
+import           Control.Applicative          ((<|>))
+import           Control.Exception            (catch, throwIO)
+import           Control.Monad                (forM_, when)
+import           Control.Monad.IO.Class       (liftIO)
+import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Reader   (ReaderT, asks, runReaderT)
+import           Data.IORef                   (IORef, modifyIORef', newIORef,
+                                               readIORef)
+import           Data.List.Split              (splitOn)
+import qualified Data.Vector.Unboxed.Mutable  as V
+import           Data.Version                 (showVersion)
+import qualified Options.Applicative          as OP
+import           Paths_sequenceTools          (version)
+import           Pipes                        (Producer, for, runEffect, yield,
+                                               (>->))
+import           Pipes.OrderedZip             (orderCheckPipe, orderedZip)
+import qualified Pipes.Prelude                as P
+import           Pipes.Safe                   (SafeT, runSafeT)
+import           System.IO                    (hPutStrLn, stderr)
+import           System.Random                (mkStdGen, setStdGen)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
+import           Text.Printf                  (printf)
 
 data OutFormat = EigenstratFormat FilePath Bool
                | PlinkFormat FilePath PlinkPopNameMode Bool
+               | VCFformat FilePath
                | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt
@@ -45,23 +63,24 @@ data ProgOpt = ProgOpt
     (Either String [String])    --optPopName
 
 data ReadStats = ReadStats {
-    rsTotalSites :: IORef Int,
+    rsTotalSites      :: IORef Int,
     rsNonMissingSites :: V.IOVector Int,
-    rsRawReads :: V.IOVector Int,
-    rsReadsCleanedSS :: V.IOVector Int,
-    rsReadsCongruent :: V.IOVector Int
+    rsRawReads        :: V.IOVector Int,
+    rsReadsCleanedSS  :: V.IOVector Int,
+    rsReadsCongruent  :: V.IOVector Int
 }
 
 data Env = Env {
-    envCallingMode :: CallingMode,
+    envCallingMode          :: CallingMode,
     envKeepInCongruentReads :: Bool,
-    envMinDepth :: Int,
-    envTransitionsMode :: TransitionsMode,
-    envOutFormat :: OutFormat,
-    envSnpFile :: FilePath,
-    envSampleNames :: [String],
-    envPopName :: Either String [String],
-    envStats :: ReadStats
+    envMinDepth             :: Int,
+    envTransitionsMode      :: TransitionsMode,
+    envOutFormat            :: OutFormat,
+    envSnpFile              :: FilePath,
+    envSampleNames          :: [String],
+    envPopName              :: Either String [String],
+    envVersion              :: Version,
+    envStats                :: ReadStats
 }
 
 instance Show Env where
@@ -73,7 +92,8 @@ instance Show Env where
         envOutFormat e,
         envSnpFile e,
         envSampleNames e,
-        envPopName e)
+        envPopName e,
+        envVersion e)
 
 type App = ReaderT Env (SafeT IO)
 
@@ -165,6 +185,7 @@ argParser = ProgOpt <$> parseCallingMode
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseZipOut) <|>
         (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode <*> parseZipOut) <|>
+        (VCFformat <$> parseVCFfile) <|>
         pure FreqSumFormat
     parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <> OP.help "GZip the output genotype files. Filenames will be appended with '.gz'.")
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
@@ -188,6 +209,9 @@ argParser = ProgOpt <$> parseCallingMode
     parsePlinkPopBoth = OP.flag' PlinkPopNameAsBoth (OP.long "popNameAsBoth" <> OP.help "Only valid for Plink Output: \
         \Write the population name into both the first and last column of the fam file, so both as Family-ID and as a \
         \Phenotype according to the Plink Spec. By default, the population name is specified only as the first column (family name in the Plink spec)")
+    parseVCFfile = OP.strOption (OP.long "vcfFile" <> OP.short 'v' <> OP.metavar "<FILE>" <>
+        OP.help "Output in VCF format to the filename specified. Note that the file ending .vcf should be included here. \
+        \Alternatively, one may use the ending .vcf.gz, in which case the output is automatically gzipped.")
     parseSampleNames = parseSampleNameList <|> parseSampleNameFile
     parseSampleNameList = OP.option (Left . splitOn "," <$> OP.str)
         (OP.long "sampleNames" <> OP.metavar "NAME1,NAME2,..." <>
@@ -228,18 +252,18 @@ initialiseEnvironment args = do
     let (ProgOpt callingMode keepInCongruentReads seed minDepth
             transitionsMode snpFile outFormat sampleNames popName) = args
     case seed of
-        Nothing -> return ()
+        Nothing    -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
     sampleNamesList <- case sampleNames of
         Left list -> return list
-        Right fn -> lines <$> readFile fn
+        Right fn  -> lines <$> readFile fn
     let n = length sampleNamesList
     readStats <- ReadStats <$> newIORef 0 <*> makeVec n <*> makeVec n <*> makeVec n <*> makeVec n
     return $ Env callingMode keepInCongruentReads minDepth transitionsMode
-        outFormat snpFile sampleNamesList popName readStats
+        outFormat snpFile sampleNamesList popName version readStats
   where
     makeVec n = do
-        v <- V.new n 
+        v <- V.new n
         V.set v 0
         return v
 
@@ -256,9 +280,11 @@ runMain = do
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
         EigenstratFormat outPrefix zipOut ->
-            outputEigenStratOrPlink outPrefix zipOut popNames Nothing freqSumProducer 
+            outputEigenStratOrPlink outPrefix zipOut popNames Nothing freqSumProducer
         PlinkFormat outPrefix popNameMode zipOut ->
             outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) freqSumProducer
+        VCFformat vcfFile ->
+            outputVCF vcfFile popNames freqSumProducer
     outputStats
 
 pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
@@ -281,7 +307,7 @@ pileupToFreqSum pileupProducer = do
             case jointEntry of
                 (Just esEntry, Nothing) -> do
                     let (EigenstratSnpEntry chr pos gpos id_ ref alt) = esEntry
-                        dosages = (replicate nrSamples Nothing) 
+                        dosages = (replicate nrSamples Nothing)
                     liftIO $ addOneSite readStats
                     yield $ FreqSumEntry chr pos (Just id_) (Just gpos) ref alt dosages
                 (Just esEntry, Just pRow) -> do
@@ -291,7 +317,7 @@ pileupToFreqSum pileupProducer = do
                             if   singleStrandMode
                             then cleanSSdamageAllSamples ref alt rawPileupBasesPerSample rawStrandInfoPerSample
                             else rawPileupBasesPerSample
-                    let congruentBasesPerSample = 
+                    let congruentBasesPerSample =
                             if   keepInCongruentReads
                             then cleanBasesPerSample
                             else map (filter (\c -> c == ref || c == alt)) cleanBasesPerSample
@@ -333,8 +359,8 @@ outputFreqSum freqSumProducer = do
     callingMode <- asks envCallingMode
     sampleNames <- asks envSampleNames
     let nrHaplotypes = case callingMode of
-            MajorityCalling _ -> 1 :: Int
-            RandomCalling -> 1
+            MajorityCalling _    -> 1 :: Int
+            RandomCalling        -> 1
             RandomDiploidCalling -> 2
     let header' = FreqSumHeader sampleNames [nrHaplotypes | _ <- sampleNames]
         outProd = freqSumProducer >-> filterTransitions transitionsOnly
@@ -358,6 +384,27 @@ outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProdu
     lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
                 P.map freqSumToEigenstrat >->
                 writeFunc genoOut snpOut indOut
+
+outputVCF :: FilePath -> [String] -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputVCF vcfFile popNames = do
+    transitionsMode <- asks envTransitionsMode
+    sampleNames <- asks envSampleNames
+    version <- asks envVersion
+    env <- ask
+    let metaInfoLines = [
+            "##fileformat=VCFv4.2",
+            "##source=pileupCaller_v" ++ showVersion version,
+            "##options=" ++ summariseOptions env
+            "##INFO=<ID=NS,Number=1,Type=Integer,Description=\"Number of Samples With Data\">",
+            "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Total Depth\">",
+            "##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele Frequency\">",
+            "##FILTER=<ID=s50,Description=\"Less than 50% of samples have data\">",
+            "##FILTER=<ID=s10,Description=\"Less than 10% of samples have data\">",
+            "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">",
+            "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">",
+            "##FORMAT=<ID=DP2,Number=2,Type=Integer,Description=\"Nr of Reads supporting each of the two alleles\">",
+            ]
+
 
 outputStats :: App ()
 outputStats = do
