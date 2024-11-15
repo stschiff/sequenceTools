@@ -29,20 +29,20 @@ import System.Random (mkStdGen, setStdGen)
 import Text.Printf (printf)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-data OutFormat = EigenstratFormat FilePath | PlinkFormat FilePath PlinkPopNameMode | FreqSumFormat deriving (Show)
+data OutFormat = EigenstratFormat FilePath Bool
+               | PlinkFormat FilePath PlinkPopNameMode Bool
+               | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt
-    CallingMode                
-    Bool                       -- wether to keep incongruent reads
-    (Maybe Int)                -- optional seed
-    Int                        -- minimal depth 
-    TransitionsMode            
-    FilePath                   -- snpFile
-    OutFormat                  
-    Bool                       -- whether to zip the output
-    (Either [String] FilePath) -- list of sample names or file with sample names
-    (Either String [String])   -- single pop-name or list of popnames
-
+    CallingMode                 --optCallingMode
+    Bool                        --optKeepIncongruentReads
+    (Maybe Int)                 --optSeed
+    Int                         --optMinDepth
+    TransitionsMode             --optTransitionsMode
+    FilePath                    --optSnpFile
+    OutFormat                   --optOutFormat
+    (Either [String] FilePath)  --optSampleNames
+    (Either String [String])    --optPopName
 
 data ReadStats = ReadStats {
     rsTotalSites :: IORef Int,
@@ -59,14 +59,21 @@ data Env = Env {
     envTransitionsMode :: TransitionsMode,
     envOutFormat :: OutFormat,
     envSnpFile :: FilePath,
-    envZipOut  :: Bool,
     envSampleNames :: [String],
     envPopName :: Either String [String],
     envStats :: ReadStats
 }
 
 instance Show Env where
-    show (Env m r d t o sf zo sn pn _) = show (m, r, d, t, o, sf, zo, sn, pn)
+    show e = show (
+        envCallingMode e,
+        envKeepInCongruentReads e,
+        envMinDepth e,
+        envTransitionsMode e,
+        envOutFormat e,
+        envSnpFile e,
+        envSampleNames e,
+        envPopName e)
 
 type App = ReaderT Env (SafeT IO)
 
@@ -89,7 +96,6 @@ argParser = ProgOpt <$> parseCallingMode
                     <*> parseMinDepth
                     <*> parseTransitionsMode
                     <*> parseSnpFile
-                    <*> parseZipOut
                     <*> parseFormat
                     <*> parseSampleNames
                     <*> parsePopName
@@ -157,10 +163,10 @@ argParser = ProgOpt <$> parseCallingMode
         \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
         \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
-    parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <> OP.help "GZip the output genotype files. Filenames will be appended with '.gz'.")
-    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix) <|>
-        (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode) <|>
+    parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseZipOut) <|>
+        (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode <*> parseZipOut) <|>
         pure FreqSumFormat
+    parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <> OP.help "GZip the output genotype files. Filenames will be appended with '.gz'.")
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
@@ -220,7 +226,7 @@ programHelpDoc =
 initialiseEnvironment :: ProgOpt -> IO Env
 initialiseEnvironment args = do
     let (ProgOpt callingMode keepInCongruentReads seed minDepth
-            transitionsMode snpFile zipOut outFormat sampleNames popName) = args
+            transitionsMode snpFile outFormat sampleNames popName) = args
     case seed of
         Nothing -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
@@ -230,7 +236,7 @@ initialiseEnvironment args = do
     let n = length sampleNamesList
     readStats <- ReadStats <$> newIORef 0 <*> makeVec n <*> makeVec n <*> makeVec n <*> makeVec n
     return $ Env callingMode keepInCongruentReads minDepth transitionsMode
-        outFormat snpFile zipOut sampleNamesList popName readStats
+        outFormat snpFile sampleNamesList popName readStats
   where
     makeVec n = do
         v <- V.new n 
@@ -249,8 +255,10 @@ runMain = do
             Right p -> if length p /= n then error "number of specified populations must equal sample size" else p
     case outFormat of
         FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix -> outputEigenStratOrPlink outPrefix popNames Nothing freqSumProducer
-        PlinkFormat outPrefix popNameMode -> outputEigenStratOrPlink outPrefix popNames (Just popNameMode) freqSumProducer
+        EigenstratFormat outPrefix zipOut ->
+            outputEigenStratOrPlink outPrefix zipOut popNames Nothing freqSumProducer 
+        PlinkFormat outPrefix popNameMode zipOut ->
+            outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) freqSumProducer
     outputStats
 
 pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
@@ -330,12 +338,11 @@ outputFreqSum freqSumProducer = do
         outProd = freqSumProducer >-> filterTransitions transitionsOnly
     lift . runEffect $ outProd >-> printFreqSumStdOut header'
 
-outputEigenStratOrPlink :: FilePath -> [String] -> Maybe PlinkPopNameMode -> Producer FreqSumEntry (SafeT IO) () -> App ()
-outputEigenStratOrPlink outPrefix popNames maybePlinkPopMode freqSumProducer = do
+outputEigenStratOrPlink :: FilePath -> Bool -> [String] -> Maybe PlinkPopNameMode -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProducer = do
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
     callingMode <- asks envCallingMode
-    zipOut      <- asks envZipOut
     let diploidizeCall = case callingMode of
             RandomCalling -> True
             MajorityCalling _ -> True
