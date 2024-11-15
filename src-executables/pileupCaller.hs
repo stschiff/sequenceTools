@@ -317,8 +317,10 @@ addOneSite readStats = modifyIORef' (rsTotalSites readStats) (+1)
 updateStatsAllSamples :: ReadStats -> [Int] -> [Int] -> [Int] -> IO ()
 updateStatsAllSamples readStats rawBaseCounts damageCleanedBaseCounts congruencyCleanedBaseCounts = do
     let nSamples = V.length (rsRawReads readStats)
-    when (length rawBaseCounts /= nSamples) $
-        throwIO (UserInputException "number of individuals specified differs from number of individuals in the pileup input")
+    when (length rawBaseCounts /= nSamples) . throwIO . UserInputException $
+        "number of individuals specified (" ++ show nSamples ++
+        ") differs from number of individuals in the pileup input (" ++
+        show (length rawBaseCounts) ++ ")"
     sequence_ [V.modify (rsRawReads readStats) (+n) i | (i, n) <- zip [0..] rawBaseCounts]
     sequence_ [V.modify (rsReadsCleanedSS readStats) (+n) i | (i, n) <- zip [0..] damageCleanedBaseCounts]
     sequence_ [V.modify (rsReadsCongruent readStats) (+n) i | (i, n) <- zip [0..] congruencyCleanedBaseCounts]
