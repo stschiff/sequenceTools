@@ -2,5 +2,6 @@ resolver: lts-21.17
 packages:
 - '.'
 extra-deps:
-- sequence-formats-1.8.0.1
+- sequence-formats-1.10.0.0
+- pipes-zlib-0.4.4.2
 

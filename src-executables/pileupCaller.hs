@@ -39,6 +39,7 @@ data ProgOpt = ProgOpt
     TransitionsMode            
     FilePath                   -- snpFile
     OutFormat                  
+    Bool                       -- whether to zip the output
     (Either [String] FilePath) -- list of sample names or file with sample names
     (Either String [String])   -- single pop-name or list of popnames
 
@@ -58,13 +59,14 @@ data Env = Env {
     envTransitionsMode :: TransitionsMode,
     envOutFormat :: OutFormat,
     envSnpFile :: FilePath,
+    envZipOut  :: Bool,
     envSampleNames :: [String],
     envPopName :: Either String [String],
     envStats :: ReadStats
 }
 
 instance Show Env where
-    show (Env m r d t o sf sn pn _) = show (m, r, d, t, o, sf, sn, pn)
+    show (Env m r d t o sf zo sn pn _) = show (m, r, d, t, o, sf, zo, sn, pn)
 
 type App = ReaderT Env (SafeT IO)
 
@@ -87,6 +89,7 @@ argParser = ProgOpt <$> parseCallingMode
                     <*> parseMinDepth
                     <*> parseTransitionsMode
                     <*> parseSnpFile
+                    <*> parseZipOut
                     <*> parseFormat
                     <*> parseSampleNames
                     <*> parsePopName
@@ -154,6 +157,7 @@ argParser = ProgOpt <$> parseCallingMode
         \X is converted to 23, Y to 24 and MT to 90. This is the most widely used encoding in Eigenstrat \
         \databases for human data, so using a SNP file with that encoding will automatically be correctly aligned \
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
+    parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <> OP.help "GZip the output genotype files. Filenames will be appended with '.gz'.")
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix) <|>
         (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode) <|>
         pure FreqSumFormat
@@ -216,7 +220,7 @@ programHelpDoc =
 initialiseEnvironment :: ProgOpt -> IO Env
 initialiseEnvironment args = do
     let (ProgOpt callingMode keepInCongruentReads seed minDepth
-            transitionsMode snpFile outFormat sampleNames popName) = args
+            transitionsMode snpFile zipOut outFormat sampleNames popName) = args
     case seed of
         Nothing -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
@@ -226,7 +230,7 @@ initialiseEnvironment args = do
     let n = length sampleNamesList
     readStats <- ReadStats <$> newIORef 0 <*> makeVec n <*> makeVec n <*> makeVec n <*> makeVec n
     return $ Env callingMode keepInCongruentReads minDepth transitionsMode
-        outFormat snpFile sampleNamesList popName readStats
+        outFormat snpFile zipOut sampleNamesList popName readStats
   where
     makeVec n = do
         v <- V.new n 
@@ -331,13 +335,16 @@ outputEigenStratOrPlink outPrefix popNames maybePlinkPopMode freqSumProducer = d
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
     callingMode <- asks envCallingMode
+    zipOut      <- asks envZipOut
     let diploidizeCall = case callingMode of
             RandomCalling -> True
             MajorityCalling _ -> True
             RandomDiploidCalling -> False
-    let (snpOut, indOut, genoOut) = case maybePlinkPopMode of
-            Just _  -> (outPrefix <> ".bim", outPrefix <> ".fam", outPrefix <> ".bed")
-            Nothing -> (outPrefix <> ".snp", outPrefix <> ".ind", outPrefix <> ".geno")
+    let (snpOut, indOut, genoOut) = case (maybePlinkPopMode, zipOut) of
+            (Just _, False)  -> (outPrefix <> ".bim", outPrefix <> ".fam", outPrefix <> ".bed")
+            (Just _, True)  -> (outPrefix <> ".bim.gz", outPrefix <> ".fam", outPrefix <> ".bed.gz")
+            (Nothing, False) -> (outPrefix <> ".snp", outPrefix <> ".ind", outPrefix <> ".geno")
+            (Nothing, True) -> (outPrefix <> ".snp.gz", outPrefix <> ".ind", outPrefix <> ".geno.gz")
     let indEntries = [EigenstratIndEntry n Unknown p | (n, p) <- zip sampleNames popNames]
     let writeFunc = case maybePlinkPopMode of
             Nothing -> (\g s i -> writeEigenstrat g s i indEntries)
