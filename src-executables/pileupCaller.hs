@@ -344,11 +344,6 @@ outputEigenStratOrPlink :: FilePath -> Bool -> [String] -> Maybe PlinkPopNameMod
 outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProducer = do
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
-    callingMode <- asks envCallingMode
-    let diploidizeCall = case callingMode of
-            RandomCalling -> True
-            MajorityCalling _ -> True
-            RandomDiploidCalling -> False
     let (snpOut, indOut, genoOut) = case (maybePlinkPopMode, zipOut) of
             (Just _, False)  -> (outPrefix <> ".bim", outPrefix <> ".fam", outPrefix <> ".bed")
             (Just _, True)  -> (outPrefix <> ".bim.gz", outPrefix <> ".fam", outPrefix <> ".bed.gz")
@@ -361,7 +356,7 @@ outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProdu
                 let famEntries = map (eigenstratInd2PlinkFam popMode) indEntries
                 in  (\g s i -> writePlink g s i famEntries)
     lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
-                P.map (freqSumToEigenstrat diploidizeCall) >->
+                P.map freqSumToEigenstrat >->
                 writeFunc genoOut snpOut indOut
 
 outputStats :: App ()

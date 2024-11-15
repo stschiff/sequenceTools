@@ -39,18 +39,18 @@ testCallToDosage = describe "callToDosage" $ do
     it "should return Nothing for haploid non-congruent call" $
         callToDosage 'A' 'C' (HaploidCall 'G') `shouldBe` Nothing
     it "should return 0 for haploid ref call" $
-        callToDosage 'A' 'C' (HaploidCall 'A') `shouldBe` Just 0
+        callToDosage 'A' 'C' (HaploidCall 'A') `shouldBe` Just (0, 1)
     it "should return 1 for haploid alt call" $
-        callToDosage 'A' 'C' (HaploidCall 'C') `shouldBe` Just 1        
+        callToDosage 'A' 'C' (HaploidCall 'C') `shouldBe` Just (1, 1)
     it "should return Nothing for diploid non-congruent call" $
         callToDosage 'A' 'C' (DiploidCall 'A' 'G') `shouldBe` Nothing
     it "should return 0 for diploid hom-ref call" $
-        callToDosage 'A' 'C' (DiploidCall 'A' 'A') `shouldBe` Just 0
+        callToDosage 'A' 'C' (DiploidCall 'A' 'A') `shouldBe` Just (0, 2)
     it "should return 1 for diploid het call" $ do
-        callToDosage 'A' 'C' (DiploidCall 'A' 'C') `shouldBe` Just 1
-        callToDosage 'A' 'C' (DiploidCall 'C' 'A') `shouldBe` Just 1
+        callToDosage 'A' 'C' (DiploidCall 'A' 'C') `shouldBe` Just (1, 2)
+        callToDosage 'A' 'C' (DiploidCall 'C' 'A') `shouldBe` Just (1, 2)
     it "should return 2 for diploid hom-alt call" $
-        callToDosage 'A' 'C' (DiploidCall 'C' 'C') `shouldBe` Just 2
+        callToDosage 'A' 'C' (DiploidCall 'C' 'C') `shouldBe` Just (2, 2)
 
 
 testCallGenotypeFromPileup :: Spec
@@ -114,55 +114,59 @@ testCallRandomDiploid = describe "callRandomDiploid" $ do
 testDosageToEigenstratGeno :: Spec
 testDosageToEigenstratGeno = describe "dosageToEigenstratGeno" $ do
     it "should give Hom-Ref for 0 pseudo-haploid" $
-        dosageToEigenstratGeno True (Just 0) `shouldBe` HomRef
+        dosageToEigenstratGeno (Just (0, 1)) `shouldBe` HomRef
     it "should give Hom-Alt for 1 pseudo-haploid" $
-        dosageToEigenstratGeno True (Just 1) `shouldBe` HomAlt
+        dosageToEigenstratGeno (Just (1, 1)) `shouldBe` HomAlt
     it "should give Missing for Nothing pseudo-haploid" $
-        dosageToEigenstratGeno True Nothing `shouldBe` Missing
+        dosageToEigenstratGeno Nothing `shouldBe` Missing
     it "should give Hom-Ref for 0 diploid" $
-        dosageToEigenstratGeno False (Just 0) `shouldBe` HomRef
+        dosageToEigenstratGeno (Just (0, 2)) `shouldBe` HomRef
     it "should give Het for 1 diploid" $
-        dosageToEigenstratGeno False (Just 1) `shouldBe` Het
+        dosageToEigenstratGeno (Just (1, 2)) `shouldBe` Het
     it "should give Hom-Alt for 2 diploid" $
-        dosageToEigenstratGeno False (Just 2) `shouldBe` HomAlt
+        dosageToEigenstratGeno (Just (2, 2)) `shouldBe` HomAlt
     it "should give Missing for Nothing diploid" $
-        dosageToEigenstratGeno False Nothing `shouldBe` Missing
+        dosageToEigenstratGeno Nothing `shouldBe` Missing
 
 testFreqSumToEigenstrat :: Spec
 testFreqSumToEigenstrat = describe "freqSumtoEigenstrat" $ do
-    let fs = FreqSumEntry (Chrom "1") 1000 Nothing Nothing 'A' 'C' [Just 0, Just 1, Just 1, Nothing, Just 0]
+    let fs = FreqSumEntry (Chrom "1") 1000 Nothing Nothing 'A' 'C' [Just (0, 1), Just (1, 1), Just (1, 1), Nothing, Just (0, 1)]
     let es = EigenstratSnpEntry (Chrom "1") 1000 0.0 (B.pack "1_1000") 'A' 'C'
         genoLine = fromList [HomRef, HomAlt, HomAlt, Missing, HomRef]
     it "should convert a freqSum example correctly to eigenstrat" $
-        freqSumToEigenstrat True fs `shouldBe` (es, genoLine)
+        freqSumToEigenstrat fs `shouldBe` (es, genoLine)
     it "should convert a freqSum example with rsId correctly to eigenstrat" $
-        freqSumToEigenstrat True (fs {fsSnpId = Just "rs123"}) `shouldBe` (es {snpId = "rs123"}, genoLine)
+        freqSumToEigenstrat (fs {fsSnpId = Just "rs123"}) `shouldBe` (es {snpId = "rs123"}, genoLine)
 
 
 mockFreqSumData :: [FreqSumEntry]
 mockFreqSumData = [
-    FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0],
-    FreqSumEntry (Chrom "1") 2000 (Just "rs2") Nothing 'C' 'T' [Just 1, Just 2, Nothing, Just 0, Just 0],
-    FreqSumEntry (Chrom "1") 3000 (Just "rs3") Nothing 'A' 'G' [Just 1, Just 2, Nothing, Just 0, Just 0],
-    FreqSumEntry (Chrom "2") 1000 (Just "rs4") Nothing 'A' 'G' [Just 1, Just 2, Nothing, Just 0, Just 0],
-    FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A' [Just 1, Just 2, Nothing, Just 0, Just 0],
-    FreqSumEntry (Chrom "2") 3000 (Just "rs6") Nothing 'T' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0]]
+    FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
+    FreqSumEntry (Chrom "1") 2000 (Just "rs2") Nothing 'C' 'T' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
+    FreqSumEntry (Chrom "1") 3000 (Just "rs3") Nothing 'A' 'G' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
+    FreqSumEntry (Chrom "2") 1000 (Just "rs4") Nothing 'A' 'G' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
+    FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
+    FreqSumEntry (Chrom "2") 3000 (Just "rs6") Nothing 'T' 'C' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]]
 
 testFilterTransitions :: Spec
 testFilterTransitions = describe "filterTransitions" $ do
     it "should remove transitions with SkipTransitions" $ do
         let r = P.toList $ each mockFreqSumData >-> filterTransitions SkipTransitions
         r `shouldBe` [
-            FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0],
-            FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A' [Just 1, Just 2, Nothing, Just 0, Just 0]]
+            FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C'
+                [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
+            FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A'
+                [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]]
     it "should mark transitions as missing with TransitionsMissing" $ do
         let r = P.toList $ each mockFreqSumData >-> filterTransitions TransitionsMissing
         r `shouldBe` [
-            FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C' [Just 1, Just 2, Nothing, Just 0, Just 0],
+            FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C'
+                [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
             FreqSumEntry (Chrom "1") 2000 (Just "rs2") Nothing 'C' 'T' [Nothing, Nothing, Nothing, Nothing, Nothing],
             FreqSumEntry (Chrom "1") 3000 (Just "rs3") Nothing 'A' 'G' [Nothing, Nothing, Nothing, Nothing, Nothing],
             FreqSumEntry (Chrom "2") 1000 (Just "rs4") Nothing 'A' 'G' [Nothing, Nothing, Nothing, Nothing, Nothing],
-            FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A' [Just 1, Just 2, Nothing, Just 0, Just 0],
+            FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A'
+                [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
             FreqSumEntry (Chrom "2") 3000 (Just "rs6") Nothing 'T' 'C' [Nothing, Nothing, Nothing, Nothing, Nothing]]
     it "should output all sites with AllSites" $ do
         let r = P.toList $ each mockFreqSumData >-> filterTransitions AllSites

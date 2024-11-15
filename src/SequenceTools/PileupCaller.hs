@@ -21,15 +21,15 @@ data CallingMode = MajorityCalling Bool | RandomCalling | RandomDiploidCalling d
 data TransitionsMode = TransitionsMissing | SkipTransitions | SingleStrandMode | AllSites deriving (Eq, Show)
 
 -- |a function to turn a call into the dosage of non-reference alleles
-callToDosage :: Char -> Char -> Call -> Maybe Int
+callToDosage :: Char -> Char -> Call -> Maybe (Int, Int)
 callToDosage refA altA call = case call of
-    HaploidCall a | a == refA -> Just 0
-                  | a == altA -> Just 1
+    HaploidCall a | a == refA -> Just (0, 1)
+                  | a == altA -> Just (1, 1)
                   | otherwise -> Nothing
-    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> Just 0
-                      | (a1, a2) == (refA, altA) -> Just 1
-                      | (a1, a2) == (altA, refA) -> Just 1
-                      | (a1, a2) == (altA, altA) -> Just 2
+    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> Just (0, 2)
+                      | (a1, a2) == (refA, altA) -> Just (1, 2)
+                      | (a1, a2) == (altA, refA) -> Just (1, 2)
+                      | (a1, a2) == (altA, altA) -> Just (2, 2)
                       | otherwise                -> Nothing
     MissingCall -> Nothing
 

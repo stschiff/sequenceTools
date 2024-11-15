@@ -4,7 +4,7 @@ import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader
     FreqSumEntry(..))
 import SequenceFormats.Eigenstrat (readEigenstrat, GenoEntry(..), GenoLine, EigenstratSnpEntry(..), EigenstratIndEntry(..))
 import SequenceFormats.Utils (Chrom(..))
-import SequenceTools.Utils (versionInfoOpt, versionInfoText)
+import SequenceTools.Utils (versionInfoOpt, versionInfoText, dosageToEigenstratGeno)
 
 import Control.Applicative ((<|>))
 import Control.Foldl (purely, Fold(..))
@@ -13,7 +13,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Vector as V
 import Lens.Family2 (view)
 import qualified Options.Applicative as OP
-import Pipes (for, Producer, (>->), yield, Consumer, cat)
+import Pipes (for, Producer, (>->), Consumer, cat)
 import Pipes.Group (groupsBy, folds)
 import Pipes.Safe (MonadSafe, runSafeT)
 import qualified Pipes.Prelude as P
@@ -76,19 +76,10 @@ runWithOpts (ProgOpt inputOpt) = runSafeT $ do
 
 runWithFreqSum :: (MonadSafe m) => Maybe FilePath -> m ([String], Producer InputEntry m ())
 runWithFreqSum fsFile = do
-    (FreqSumHeader names nrHaps, fsProd) <- case fsFile of
+    (FreqSumHeader names _, fsProd) <- case fsFile of
         Nothing -> readFreqSumStdIn
         Just fn -> readFreqSumFile fn
-    let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ _ _ counts) -> do
-            let genotypes = V.fromList $ do
-                    (count', nrHap) <- zip counts nrHaps
-                    case count' of
-                        Just 0 -> return HomRef
-                        Just x | x == nrHap -> return HomAlt
-                               | x > 0 && x < nrHap -> return Het
-                        Nothing -> return Missing
-                        _ -> error "should not happen"
-            yield $ InputEntry chrom genotypes
+    let prod = fsProd >-> P.map (\fs -> InputEntry (fsChrom fs) (V.fromList . map dosageToEigenstratGeno . fsCounts $ fs))
     return (names, prod)
 
 runWithEigenstrat :: (MonadSafe m) =>

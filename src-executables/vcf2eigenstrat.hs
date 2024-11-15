@@ -59,7 +59,7 @@ runMain (ProgOpt maybeSnpPosFile outPrefix) =
                 Just snpPosFile ->
                     return $ runJointly vcfBodyBiAllelic nrInds snpPosFile
                 Nothing -> return $ runSimple vcfBodyBiAllelic
-        runEffect $ vcfProducer >-> P.map (freqSumToEigenstrat False) >-> writeEigenstrat genoOut snpOut indOut indEntries
+        runEffect $ vcfProducer >-> P.map freqSumToEigenstrat >-> writeEigenstrat genoOut snpOut indOut indEntries
 
 runJointly :: (MonadIO m, MonadSafe m) => Producer VCFentry m r -> Int -> FilePath -> Producer FreqSumEntry m r
 runJointly vcfBody nrInds snpPosFile =
@@ -76,9 +76,7 @@ processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
             let dosages = replicate nrInds Nothing
             yield $ FreqSumEntry snpChrom' snpPos' (Just snpId') (Just gpos) snpRef' snpAlt' dosages
         (Just (EigenstratSnpEntry snpChrom' snpPos' gpos snpId' snpRef' snpAlt'), Just vcfEntry) -> do
-            dosages <- case getDosages vcfEntry of
-                Right dos -> return dos
-                Left err -> liftIO . throwIO $ AssertionFailed err
+            dosages <- liftIO $ getDosages vcfEntry
             when (length dosages /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent number of genotypes.")
             let normalizedDosages =
                     case vcfAlt vcfEntry of
@@ -93,15 +91,14 @@ processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
         _ -> return ()
   where
     flipDosages dos = case dos of
-        Just 0 -> Just 2
-        Just 1 -> Just 1
-        Just 2 -> Just 0
+        Just (0, 2) -> Just (2, 2)
+        Just (1, 2) -> Just (1, 2)
+        Just (2, 2) -> Just (0, 2)
+        Just (0, 1) -> Just (1, 1)
+        Just (1, 1) -> Just (0, 1)
         _ -> Nothing
 
 runSimple :: (MonadIO m) => Producer VCFentry m r -> Producer FreqSumEntry m r
 runSimple vcfBody = for vcfBody $ \e -> do
-    case vcfToFreqSumEntry e of
-        Right e' -> do
-            --liftIO . B.putStr . freqSumEntryToText $ e'
-            yield e'
-        Left err -> (liftIO . throwIO) (AssertionFailed err)
+    fs <- liftIO $ vcfToFreqSumEntry e
+    yield fs

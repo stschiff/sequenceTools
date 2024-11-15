@@ -38,8 +38,8 @@ sampleWithoutReplacement = go []
     remove i xs = let (ys, zs) = splitAt i xs in ys ++ tail zs
 
 -- |convert a freqSum entry to an eigenstrat SNP entry
-freqSumToEigenstrat :: Bool -> FreqSumEntry -> (EigenstratSnpEntry, GenoLine)
-freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos maybeSnpId maybeGeneticPos ref alt calls) =
+freqSumToEigenstrat :: FreqSumEntry -> (EigenstratSnpEntry, GenoLine)
+freqSumToEigenstrat (FreqSumEntry chrom@(Chrom c) pos maybeSnpId maybeGeneticPos ref alt calls) =
     let snpId_ = case maybeSnpId of 
             Just id_ -> id_
             Nothing -> c <> "_" <> B.pack (show pos)
@@ -47,22 +47,15 @@ freqSumToEigenstrat diploidizeCall (FreqSumEntry chrom@(Chrom c) pos maybeSnpId 
             Just p -> p
             Nothing -> 0.0
         snpEntry = EigenstratSnpEntry chrom pos geneticPos snpId_ ref alt
-        geno = fromList . map (dosageToEigenstratGeno diploidizeCall) $ calls
+        geno = fromList . map dosageToEigenstratGeno $ calls
     in  (snpEntry, geno)
 
 -- |convert a Dosage to an eigenstrat-encoded genotype
-dosageToEigenstratGeno :: Bool -> Maybe Int -> GenoEntry
-dosageToEigenstratGeno diploidizeCall c =
-    if diploidizeCall then
-        case c of
-            Just 0 -> HomRef
-            Just 1 -> HomAlt
-            Nothing -> Missing
-            _ -> error "illegal call for pseudo-haploid Calling method"
-    else
-        case c of
-            Just 0 -> HomRef
-            Just 1 -> Het
-            Just 2 -> HomAlt
-            Nothing -> Missing
-            _ -> error ("unknown genotype " ++ show c)
+dosageToEigenstratGeno :: Maybe (Int, Int) -> GenoEntry
+dosageToEigenstratGeno Nothing = Missing
+dosageToEigenstratGeno (Just (0, 1)) = HomRef
+dosageToEigenstratGeno (Just (1, 1)) = HomAlt
+dosageToEigenstratGeno (Just (0, 2)) = HomRef
+dosageToEigenstratGeno (Just (1, 2)) = Het
+dosageToEigenstratGeno (Just (2, 2)) = HomAlt
+dosageToEigenstratGeno c = error ("unknown genotype " ++ show c)
