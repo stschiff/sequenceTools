@@ -270,7 +270,6 @@ initialiseEnvironment args = do
 runMain :: App ()
 runMain = do
     let pileupProducer = readPileupFromStdIn
-    freqSumProducer <- pileupToFreqSum pileupProducer
     outFormat <- asks envOutFormat
     popNameSpec <- asks envPopName
     n <- length <$> asks envSampleNames
@@ -278,13 +277,17 @@ runMain = do
             Left singlePopName -> replicate n singlePopName
             Right p -> if length p /= n then error "number of specified populations must equal sample size" else p
     case outFormat of
-        FreqSumFormat -> outputFreqSum freqSumProducer
-        EigenstratFormat outPrefix zipOut ->
+        FreqSumFormat -> do
+            freqSumProducer <- pileupToFreqSum pileupProducer
+            outputFreqSum freqSumProducer
+        EigenstratFormat outPrefix zipOut -> do
+            freqSumProducer <- pileupToFreqSum pileupProducer
             outputEigenStratOrPlink outPrefix zipOut popNames Nothing freqSumProducer
-        PlinkFormat outPrefix popNameMode zipOut ->
+        PlinkFormat outPrefix popNameMode zipOut -> do
+            freqSumProducer <- pileupToFreqSum pileupProducer
             outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) freqSumProducer
         VCFformat vcfFile ->
-            outputVCF vcfFile popNames freqSumProducer
+            outputVCF vcfFile popNames pileupProducer
     outputStats
 
 pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
@@ -385,7 +388,7 @@ outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProdu
                 P.map freqSumToEigenstrat >->
                 writeFunc genoOut snpOut indOut
 
-outputVCF :: FilePath -> [String] -> Producer FreqSumEntry (SafeT IO) () -> App ()
+outputVCF :: FilePath -> [String] -> Producer PileupRow (SafeT IO) () -> App ()
 outputVCF vcfFile popNames = do
     transitionsMode <- asks envTransitionsMode
     sampleNames <- asks envSampleNames
@@ -404,6 +407,8 @@ outputVCF vcfFile popNames = do
             "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">",
             "##FORMAT=<ID=DP2,Number=2,Type=Integer,Description=\"Nr of Reads supporting each of the two alleles\">",
             ]
+    snpFileName <- asks envSnpFile
+
 
 
 outputStats :: App ()

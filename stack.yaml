@@ -3,6 +3,6 @@ packages:
 - '.'
 extra-deps:
 # - sequence-formats-1.10.0.0
-- /Users/stephan_schiffels/dev/sequence-formats
+- ../sequence-formats
 - pipes-zlib-0.4.4.2
 
