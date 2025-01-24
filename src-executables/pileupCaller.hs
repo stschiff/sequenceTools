@@ -279,18 +279,19 @@ runMain = do
     case outFormat of
         FreqSumFormat -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputFreqSum freqSumProducer
+            outputFreqSum (freqSumProducer >-> map snd)
         EigenstratFormat outPrefix zipOut -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputEigenStratOrPlink outPrefix zipOut popNames Nothing freqSumProducer
+            outputEigenStratOrPlink outPrefix zipOut popNames Nothing (freqSumProducer >-> map snd)
         PlinkFormat outPrefix popNameMode zipOut -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) freqSumProducer
+            outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) (freqSumProducer >-> map snd)
         VCFformat vcfFile ->
-            outputVCF vcfFile popNames pileupProducer
+            freqSumProducer <- pileupToFreqSum pileupProducer
+            outputVCF vcfFile popNames freqSumProducer
     outputStats
 
-pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer FreqSumEntry (SafeT IO) ())
+pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer (Maybe PileupRow, FreqSumEntry) (SafeT IO) ())
 pileupToFreqSum pileupProducer = do
     snpFileName <- asks envSnpFile
     nrSamples <- length <$> asks envSampleNames
@@ -302,7 +303,7 @@ pileupToFreqSum pileupProducer = do
             orderedZip cmpSnpToPileupPos snpProdOrderChecked pileupProdOrderChecked
     mode <- asks envCallingMode
     keepInCongruentReads <- asks envKeepInCongruentReads
-    transisitionsMode <- asks envTransitionsMode
+    transitionsMode <- asks envTransitionsMode
     let singleStrandMode = (transisitionsMode == SingleStrandMode)
     minDepth <- asks envMinDepth
     readStats <- asks envStats
@@ -312,7 +313,7 @@ pileupToFreqSum pileupProducer = do
                     let (EigenstratSnpEntry chr pos gpos id_ ref alt) = esEntry
                         dosages = (replicate nrSamples Nothing)
                     liftIO $ addOneSite readStats
-                    yield $ FreqSumEntry chr pos (Just id_) (Just gpos) ref alt dosages
+                    yield $ (Nothing, FreqSumEntry chr pos (Just id_) (Just gpos) ref alt dosages)
                 (Just esEntry, Just pRow) -> do
                     let (EigenstratSnpEntry chr pos gpos id_ ref alt) = esEntry
                         (PileupRow _ _ _ rawPileupBasesPerSample rawStrandInfoPerSample) = pRow
@@ -329,9 +330,9 @@ pileupToFreqSum pileupProducer = do
                         (map length cleanBasesPerSample) (map length congruentBasesPerSample)
                     calls <- liftIO $ mapM (callGenotypeFromPileup mode minDepth) congruentBasesPerSample
                     let genotypes = map (callToDosage ref alt) calls
-                    yield (FreqSumEntry chr pos (Just id_) (Just gpos) ref alt genotypes)
+                    yield $ (Just pRow, FreqSumEntry chr pos (Just id_) (Just gpos) ref alt genotypes)
                 _ -> return ()
-    return (fst <$> ret)
+    return $ (fst <$> ret) >-> filterTransitions transitionsMode
   where
     cmpSnpPos :: EigenstratSnpEntry -> EigenstratSnpEntry -> Ordering
     cmpSnpPos es1 es2 = (snpChrom es1, snpPos es1) `compare` (snpChrom es2, snpPos es2)
@@ -366,8 +367,7 @@ outputFreqSum freqSumProducer = do
             RandomCalling        -> 1
             RandomDiploidCalling -> 2
     let header' = FreqSumHeader sampleNames [nrHaplotypes | _ <- sampleNames]
-        outProd = freqSumProducer >-> filterTransitions transitionsOnly
-    lift . runEffect $ outProd >-> printFreqSumStdOut header'
+    lift . runEffect $ freqSumProducer >-> printFreqSumStdOut header'
 
 outputEigenStratOrPlink :: FilePath -> Bool -> [String] -> Maybe PlinkPopNameMode -> Producer FreqSumEntry (SafeT IO) () -> App ()
 outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProducer = do
@@ -384,13 +384,10 @@ outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProdu
             Just popMode ->
                 let famEntries = map (eigenstratInd2PlinkFam popMode) indEntries
                 in  (\g s i -> writePlink g s i famEntries)
-    lift . runEffect $ freqSumProducer >-> filterTransitions transitionsMode >->
-                P.map freqSumToEigenstrat >->
-                writeFunc genoOut snpOut indOut
+    lift . runEffect $ freqSumProducer >-> P.map freqSumToEigenstrat >-> writeFunc genoOut snpOut indOut
 
-outputVCF :: FilePath -> [String] -> Producer PileupRow (SafeT IO) () -> App ()
-outputVCF vcfFile popNames = do
-    transitionsMode <- asks envTransitionsMode
+outputVCF :: FilePath -> [String] -> Producer (Maybe PileupRow, FreqSumEntry) (SafeT IO) () -> App ()
+outputVCF vcfFile popNames freqSumProd = do
     sampleNames <- asks envSampleNames
     version <- asks envVersion
     env <- ask
@@ -405,11 +402,29 @@ outputVCF vcfFile popNames = do
             "##FILTER=<ID=s10,Description=\"Less than 10% of samples have data\">",
             "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">",
             "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">",
-            "##FORMAT=<ID=DP2,Number=2,Type=Integer,Description=\"Nr of Reads supporting each of the two alleles\">",
-            ]
-    snpFileName <- asks envSnpFile
+            "##FORMAT=<ID=DP2,Number=2,Type=Integer,Description=\"Nr of Reads supporting each of the two alleles\">"]
+        vcfh = VCFheader metaInfoLines sampleNames
+    lift . runEffect $ freqSumProd >-> P.map (\(mpr, fse) -> createVcfEntry mpr fse) >-> writeVCFfile vcfFile vcfh
 
-
+createVcfEntry :: Maybe PileupRow -> FreqSumEntry -> VCFentry
+createVcfEntry maybePileupRow (FreqSumEntry chrom@(Chrom c) pos maybeSnpId maybeGeneticPos ref alt calls) =
+    let nrMissing = length . filter (==Nothing) $ calls
+    let nrSamples = length calls
+    let filterString =
+            if nrMissing * 10 < nrSamples then "s10;s50"
+            else if nrMissing * 2 < nrSamples then "s50"
+            else "PASS"
+    let totalDepth = case maybePileupRow of
+            Nothing -> 0
+            Just pr -> sum . map length . pileupBases $ pr 
+        nrSamplesWithData = nrSamples - nrMissing
+        alleleFreq = computeAlleleFreq calls
+        infofields = [
+            B.pack $ "NS=" ++ show nrSamplesWithData,
+            B.pack $ "DP=" ++ show totalDepth,
+            B.pack $ "AF=" ++ show alleleFreq]
+    case maybePileupRow of
+        Nothing -> VCFentry chrom pos maybeSnpId (B.pack [ref]) [B.pack [alt]] Nothing (Just filterString) infoFields genotypeInfo
 
 outputStats :: App ()
 outputStats = do

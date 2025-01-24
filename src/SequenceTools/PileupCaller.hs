@@ -86,15 +86,18 @@ callRandomDiploid alleles = do
         Just [a1, a2] -> return $ DiploidCall a1 a2
         _ -> error "should not happen"
 
-filterTransitions :: (Monad m) => TransitionsMode -> Pipe FreqSumEntry FreqSumEntry m ()
+-- the basic information stream is a tuple of a PileupRow (if data is present at a SNP), and a FreqSumEntry that contains the calls.
+-- For Eigenstrat and Plink we don't need the PileupRow, but for VCF, we can store additional information beyond the mere calls,
+-- that's why we're streaming both, to have an output-agnostic machinery.
+filterTransitions :: (Monad m) => TransitionsMode -> Pipe (Maybe PileupRow, FreqSumEntry) (Maybe PileupRow, FreqSumEntry) m ()
 filterTransitions transversionsMode =
     case transversionsMode of
         SkipTransitions ->
-            P.filter (\(FreqSumEntry _ _ _ _ ref alt _) -> isTransversion ref alt)
+            P.filter (\(_, FreqSumEntry _ _ _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
-            P.map (\(FreqSumEntry chrom pos id_ gpos ref alt calls) ->
+            P.map (\(mp, FreqSumEntry chrom pos id_ gpos ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
-                in  FreqSumEntry chrom pos id_ gpos ref alt calls')
+                in  (mp, FreqSumEntry chrom pos id_ gpos ref alt calls'))
         _ -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt
@@ -118,3 +121,10 @@ cleanSSdamageAllSamples ref alt basesPerSample strandPerSample
 
 removeReads :: Strand -> String -> [Strand] -> String
 removeReads strand bases strands = [b | (b, s) <- zip bases strands, s /= strand]
+
+computeAlleleFreq :: [Maybe (Int, Int)] -> Maybe Double
+computeAlleleFreq dosages =
+    let nrTotalAlleles = map (maybe 0 snd) dosages
+        nrNonRefAlleles = map (maybe 0 fst) dosages
+    if nrTotalAlleles == 0 then Nothing else
+        Just (fromIntegral nrNonRefAlleles / fromIntegral nrTotalAlleles)
