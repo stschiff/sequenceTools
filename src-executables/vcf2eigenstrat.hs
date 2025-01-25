@@ -53,7 +53,7 @@ runMain (ProgOpt maybeSnpPosFile outPrefix) =
             genoOut = outPrefix ++ ".geno"
             VCFheader _ sampleNames = vcfHeader
             nrInds = length sampleNames
-            indEntries = [EigenstratIndEntry n Unknown "Unknown" | n <- sampleNames]
+            indEntries = [EigenstratIndEntry (B.unpack n) Unknown "Unknown" | n <- sampleNames]
         let vcfBodyBiAllelic = vcfBody >-> P.filter (\e -> isBiallelicSnp (vcfRef e) (vcfAlt e))
         vcfProducer <- case maybeSnpPosFile of
                 Just snpPosFile ->

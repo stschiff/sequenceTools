@@ -1,56 +1,62 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           SequenceFormats.Eigenstrat   (EigenstratIndEntry (..),
-                                               EigenstratSnpEntry (..),
-                                               Sex (..), readEigenstratSnpFile,
-                                               writeEigenstrat)
-import           SequenceFormats.FreqSum      (FreqSumEntry (..),
-                                               FreqSumHeader (..),
-                                               printFreqSumStdOut)
-import           SequenceFormats.Pileup       (PileupRow (..),
-                                               readPileupFromStdIn)
-import           SequenceFormats.Plink        (PlinkPopNameMode (..),
-                                               eigenstratInd2PlinkFam,
-                                               writePlink)
-import           SequenceFormats.Utils        (Chrom (..),
-                                               SeqFormatException (..))
-import           SequenceFormats.VCF          (VCFentry (..), VCFheader(..), printVCFtoStdOut)
-import           SequenceTools.PileupCaller   (CallingMode (..),
-                                               TransitionsMode (..),
-                                               callGenotypeFromPileup,
-                                               callToDosage,
-                                               cleanSSdamageAllSamples,
-                                               filterTransitions,
-                                               computeAlleleFreq)
-import           SequenceTools.Utils          (UserInputException (..),
-                                               freqSumToEigenstrat,
-                                               versionInfoOpt, versionInfoText)
+import           SequenceFormats.Eigenstrat      (EigenstratIndEntry (..),
+                                                  EigenstratSnpEntry (..),
+                                                  Sex (..),
+                                                  readEigenstratSnpFile,
+                                                  writeEigenstrat)
+import           SequenceFormats.FreqSum         (FreqSumEntry (..),
+                                                  FreqSumHeader (..),
+                                                  printFreqSumStdOut)
+import           SequenceFormats.Pileup          (PileupRow (..),
+                                                  readPileupFromStdIn)
+import           SequenceFormats.Plink           (PlinkPopNameMode (..),
+                                                  eigenstratInd2PlinkFam,
+                                                  writePlink)
+import           SequenceFormats.Utils           (Chrom (..),
+                                                  SeqFormatException (..))
+import           SequenceFormats.VCF             (VCFentry (..), VCFheader (..),
+                                                  printVCFtoStdOut)
+import           SequenceTools.PileupCaller      (CallingMode (..),
+                                                  TransitionsMode (..),
+                                                  callGenotypeFromPileup,
+                                                  callToDosage,
+                                                  cleanSSdamageAllSamples,
+                                                  computeAlleleFreq,
+                                                  filterTransitions)
+import           SequenceTools.Utils             (UserInputException (..),
+                                                  freqSumToEigenstrat,
+                                                  versionInfoOpt,
+                                                  versionInfoText)
 
-import           Control.Applicative          ((<|>))
-import           Control.Exception            (catch, throwIO)
-import           Control.Monad                (forM_, when)
-import           Control.Monad.IO.Class       (liftIO)
-import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ReaderT, ask, asks, runReaderT)
-import qualified Data.ByteString.Char8        as B
-import           Data.IORef                   (IORef, modifyIORef', newIORef,
-                                               readIORef)
-import           Data.List                    (intercalate)
-import           Data.List.Split              (splitOn)
-import qualified Data.Vector.Unboxed.Mutable  as V
-import           Data.Version                 (Version, showVersion)
-import qualified Options.Applicative          as OP
-import           Paths_sequenceTools          (version)
-import           Pipes                        (Producer, for, runEffect, yield,
-                                               (>->))
-import           Pipes.OrderedZip             (orderCheckPipe, orderedZip)
-import qualified Pipes.Prelude                as P
-import           Pipes.Safe                   (SafeT, runSafeT)
-import           System.Environment           (getArgs, getProgName)
-import           System.IO                    (hPutStrLn, stderr)
-import           System.Random                (mkStdGen, setStdGen)
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
-import           Text.Printf                  (printf)
+import           Control.Applicative             ((<|>))
+import           Control.Exception               (catch, throwIO)
+import           Control.Monad                   (forM_, when)
+import           Control.Monad.IO.Class          (liftIO)
+import           Control.Monad.Trans.Class       (lift)
+import           Control.Monad.Trans.Reader      (ReaderT, ask, asks,
+                                                  runReaderT)
+import qualified Data.ByteString.Char8           as B
+import           Data.IORef                      (IORef, modifyIORef', newIORef,
+                                                  readIORef)
+import           Data.List                       (intercalate)
+import           Data.List.Split                 (splitOn)
+import qualified Data.Text as T
+import qualified Data.Vector.Unboxed.Mutable     as V
+import           Data.Version                    (Version, showVersion)
+import qualified Options.Applicative             as OP
+import qualified Options.Applicative.Help.Pretty as PP
+import           Paths_sequenceTools             (version)
+import           Pipes                           (Producer, for, runEffect,
+                                                  yield, (>->))
+import           Pipes.OrderedZip                (orderCheckPipe, orderedZip)
+import qualified Pipes.Prelude                   as P
+import           Pipes.Safe                      (SafeT, runSafeT)
+import qualified Prettyprinter.Util
+import           System.Environment              (getArgs, getProgName)
+import           System.IO                       (hPutStrLn, stderr)
+import           System.Random                   (mkStdGen, setStdGen)
+import           Text.Printf                     (printf)
 
 data OutFormat = EigenstratFormat FilePath Bool
                | PlinkFormat FilePath PlinkPopNameMode Bool
@@ -230,22 +236,19 @@ argParser = ProgOpt <$> parseCallingMode
         \the number of samples")
     processPopNames names = if length names == 1 then Left (head names) else Right names
 
-programHelpDoc :: PP.Doc
-programHelpDoc =
-    part1 PP.<$>
-    PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample) PP.<$>
-    part2 PP.<$> PP.line PP.<$>
-    PP.string versionInfoText
+-- programHelpDoc :: PP.Doc
+programHelpDoc = PP.vsep [part1, PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample),
+    part2, PP.line, PP.fillSep . Prettyprinter.Util.words . T.pack $ versionInfoText]
   where
-    part1 = PP.fillSep . map PP.text . words $
+    part1 = PP.fillSep . Prettyprinter.Util.words $ 
         "PileupCaller is a tool to create genotype calls from bam files using read-sampling methods. \
         \To use this tool, you need to convert bam files into the mpileup-format, specified at \
         \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \
         \to create a multi-sample mpileup file to be processed with pileupCaller is"
-    samtoolsExample = PP.hang 4 . PP.fillSep . map PP.text . words $
+    samtoolsExample = PP.hang 4 . PP.fillSep . Prettyprinter.Util.words $
         "samtools mpileup -B -q30 -Q30 -l <BED_FILE> -R -f <FASTA_REFERENCE_FILE> \
         \Sample1.bam Sample2.bam Sample3.bam | pileupCaller ..."
-    part2 = PP.fillSep . map PP.text . words $
+    part2 = PP.fillSep . Prettyprinter.Util.words $
         "You can lookup what these options do in the samtools documentation. \
         \Note that flag -B in samtools is very important to reduce reference \
         \bias in low coverage data."
