@@ -1,23 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 module SequenceTools.PileupCallerSpec (spec) where
 
-import SequenceTools.Utils (dosageToEigenstratGeno, freqSumToEigenstrat)
-import SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
-    callMajorityAllele, findMajorityAlleles, callRandomAllele,
-    callRandomDiploid, CallingMode(..),
-    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples)
+import           SequenceTools.PileupCaller (Call (..), CallingMode (..),
+                                             TransitionsMode (..),
+                                             callGenotypeFromPileup,
+                                             callMajorityAllele,
+                                             callRandomAllele,
+                                             callRandomDiploid, callToDosage,
+                                             cleanSSdamageAllSamples,
+                                             filterTransitions,
+                                             findMajorityAlleles)
+import           SequenceTools.Utils        (dosageToEigenstratGeno,
+                                             freqSumToEigenstrat)
 
-import Control.Monad (replicateM, forM_)
-import qualified Data.ByteString.Char8 as B
-import Data.List (sort)
-import Data.Vector (fromList)
-import Pipes (each, (>->))
-import qualified Pipes.Prelude as P
-import SequenceFormats.FreqSum (FreqSumEntry(..))
-import SequenceFormats.Eigenstrat (GenoEntry(..), EigenstratSnpEntry(..))
-import SequenceFormats.Utils (Chrom(..))
-import SequenceFormats.Pileup (Strand(..))
-import Test.Hspec
+import           Control.Monad              (forM_, replicateM)
+import qualified Data.ByteString.Char8      as B
+import           Data.List                  (sort)
+import           Data.Vector                (fromList)
+import           Pipes                      (each, (>->))
+import qualified Pipes.Prelude              as P
+import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
+                                             GenoEntry (..))
+import           SequenceFormats.FreqSum    (FreqSumEntry (..))
+import           SequenceFormats.Pileup     (Strand (..))
+import           SequenceFormats.Utils      (Chrom (..))
+import           Test.Hspec
 
 spec :: Spec
 spec = do
@@ -59,7 +66,7 @@ testCallGenotypeFromPileup = describe "callGenotypeFromPileup" $ do
         callGenotypeFromPileup RandomCalling 3 "A" `shouldReturn` MissingCall
     it "should not return missing if pileup above minDepth" $
         callGenotypeFromPileup RandomCalling 3 "AACCC" `shouldNotReturn` MissingCall
-    
+
 
 testCallMajorityAllele :: Spec
 testCallMajorityAllele = describe "callMajorityAllele" $ do

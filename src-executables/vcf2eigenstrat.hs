@@ -1,23 +1,29 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import Pipes.OrderedZip (orderedZip)
-import SequenceFormats.VCF (readVCFfromStdIn, VCFheader(..), VCFentry(..),
-                     isBiallelicSnp, getDosages, vcfToFreqSumEntry)
-import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), readEigenstratSnpFile, writeEigenstrat,
-    Sex(..), EigenstratIndEntry(..))
-import SequenceFormats.FreqSum (FreqSumEntry(..))
+import           Pipes.OrderedZip           (orderedZip)
+import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
+                                             EigenstratSnpEntry (..), Sex (..),
+                                             readEigenstratSnpFile,
+                                             writeEigenstrat)
+import           SequenceFormats.FreqSum    (FreqSumEntry (..))
+import           SequenceFormats.VCF        (VCFentry (..), VCFheader (..),
+                                             getDosages, isBiallelicSnp,
+                                             readVCFfromStdIn,
+                                             vcfToFreqSumEntry)
 
-import SequenceTools.Utils (versionInfoText, versionInfoOpt, freqSumToEigenstrat)
+import           SequenceTools.Utils        (freqSumToEigenstrat,
+                                             versionInfoOpt, versionInfoText)
 
-import Control.Exception.Base (throwIO, AssertionFailed(..))
-import Control.Monad (when)
-import Control.Monad.IO.Class (liftIO, MonadIO)
-import qualified Data.ByteString.Char8 as B
+import           Control.Exception.Base     (AssertionFailed (..), throwIO)
+import           Control.Monad              (when)
+import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import qualified Data.ByteString.Char8      as B
 -- import Debug.Trace (trace)
-import qualified Options.Applicative as OP
-import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
-import qualified Pipes.Prelude as P
-import Pipes.Safe (runSafeT, MonadSafe)
+import qualified Options.Applicative        as OP
+import           Pipes                      (Pipe, Producer, cat, for,
+                                             runEffect, yield, (>->))
+import qualified Pipes.Prelude              as P
+import           Pipes.Safe                 (MonadSafe, runSafeT)
 
 -- snpPosFile outPrefix
 data ProgOpt = ProgOpt (Maybe FilePath) FilePath
@@ -96,7 +102,7 @@ processVcfWithSnpFile nrInds = for cat $ \jointEntry -> do
         Just (2, 2) -> Just (0, 2)
         Just (0, 1) -> Just (1, 1)
         Just (1, 1) -> Just (0, 1)
-        _ -> Nothing
+        _           -> Nothing
 
 runSimple :: (MonadIO m) => Producer VCFentry m r -> Producer FreqSumEntry m r
 runSimple vcfBody = for vcfBody $ \e -> do

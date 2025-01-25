@@ -41,7 +41,7 @@ import           Data.IORef                      (IORef, modifyIORef', newIORef,
                                                   readIORef)
 import           Data.List                       (intercalate)
 import           Data.List.Split                 (splitOn)
-import qualified Data.Text as T
+import qualified Data.Text                       as T
 import qualified Data.Vector.Unboxed.Mutable     as V
 import           Data.Version                    (Version, showVersion)
 import qualified Options.Applicative             as OP
@@ -240,7 +240,7 @@ argParser = ProgOpt <$> parseCallingMode
 programHelpDoc = PP.vsep [part1, PP.enclose PP.line PP.line (PP.indent 4 samtoolsExample),
     part2, PP.line, PP.fillSep . Prettyprinter.Util.words . T.pack $ versionInfoText]
   where
-    part1 = PP.fillSep . Prettyprinter.Util.words $ 
+    part1 = PP.fillSep . Prettyprinter.Util.words $
         "PileupCaller is a tool to create genotype calls from bam files using read-sampling methods. \
         \To use this tool, you need to convert bam files into the mpileup-format, specified at \
         \http://www.htslib.org/doc/samtools.html (under \"mpileup\"). The recommended command line \

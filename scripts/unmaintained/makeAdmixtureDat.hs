@@ -3,14 +3,14 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Foldl (list)
-import Control.Monad (forM_)
-import Data.List (sortOn, groupBy)
-import Data.Maybe (fromJust, fromMaybe)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import Prelude hiding (FilePath)
-import Turtle
+import           Control.Foldl (list)
+import           Control.Monad (forM_)
+import           Data.List     (groupBy, sortOn)
+import           Data.Maybe    (fromJust, fromMaybe)
+import qualified Data.Text     as T
+import qualified Data.Text.IO  as T
+import           Prelude       hiding (FilePath)
+import           Turtle
 
 data Options = Options FilePath FilePath FilePath (Maybe Int) Bool (Maybe Int)
 
@@ -34,7 +34,7 @@ main = do
                                       \to a given number. The values in padded columns is set \
                                       \to zero. This is useful for using a single Datagraph file \
                                       \to produce plots for multiple K")
-                           
+
 printData (Options admixtureF popF popGroupF maybeBlankLines clusterSort maybePad) = do
     popGroupDat <- readPopGroupDat popGroupF
     admixtureDat <- fold (readAdmixtureDat popGroupDat admixtureF popF) list
@@ -51,7 +51,7 @@ printData (Options admixtureF popF popGroupF maybeBlankLines clusterSort maybePa
     let padColumns = replicate (padLength - k) 0.0
     forM_ legendedDat $ \group -> do
         forM_ group $ \(sample, pop, popGroup, legend, vals) -> do
-            echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals ++ 
+            echo . T.intercalate "\t" $ [sample, pop, popGroup, legend] ++ map (format g) vals ++
                                         map (format g) padColumns
         replicateM_ blankLines (echo "")
 
@@ -70,14 +70,14 @@ readAdmixtureDat popGroupDat admixtureF popF = do
 
 sortByPopGroupFile :: [(Text, Text, Text, [Double])] -> [(Text, Text)]
                    -> [(Text, Text, Text, [Double])]
-sortByPopGroupFile admixtureDat popGroupDat = 
+sortByPopGroupFile admixtureDat popGroupDat =
     sortOn (\(_, p, _, _) -> fromJust $ lookup p sortIndices) admixtureDat
   where
     sortIndices = [(p, i) | ((p, _), i) <- zip popGroupDat [0..]]
 
 sortByCluster :: [(Text, Text, Text, [Double])] -> [(Text, Text, Text, [Double])]
 sortByCluster admixtureDat =
-    let groups = groupBy (\(_, p1, _, _) (_, p2, _, _) -> p1 == p2) . sortOn (\(_, p, _, _) -> p) $ 
+    let groups = groupBy (\(_, p1, _, _) (_, p2, _, _) -> p1 == p2) . sortOn (\(_, p, _, _) -> p) $
                  admixtureDat
         groupClusterWeights = [getColumnAverage . map (\(_, _, _, vals) -> vals) $ g | g <- groups]
         internallySortedGroups = zipWith sortInternally groupClusterWeights groups
@@ -89,8 +89,8 @@ sortByCluster admixtureDat =
     sortExternally weightMatrix groups = map snd . sortOn (maxIndex . fst) . sortOn (negate . maximum . fst) . zip weightMatrix $ groups
       where
         maxIndex = last . map fst . sortOn snd . zip [0..]
-    
-    
+
+
 getColumnAverage :: [[Double]] -> [Double]
 getColumnAverage mat = [(sum . map (!!i) $ mat) / fromIntegral n | i <- [0 .. (k - 1)]]
   where
@@ -106,4 +106,4 @@ putLegend admixtureDat = do
     return [(s, p, pg, l, v) | ((s, p, pg, v), l) <- zip group labels]
   where
     groups = groupBy (\(_, pop1, _, _) (_, pop2, _, _) -> pop1 == pop2) admixtureDat
-        
+

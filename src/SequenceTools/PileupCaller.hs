@@ -5,13 +5,13 @@ module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileu
     TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples,
     computeAlleleFreq) where
 
-import SequenceFormats.FreqSum (FreqSumEntry(..))
-import SequenceFormats.Pileup (Strand(..), PileupRow(..))
-import SequenceTools.Utils (sampleWithoutReplacement)
+import           SequenceFormats.FreqSum (FreqSumEntry (..))
+import           SequenceFormats.Pileup  (PileupRow (..), Strand (..))
+import           SequenceTools.Utils     (sampleWithoutReplacement)
 
-import Data.List (sortOn, group, sort)
-import Pipes (Pipe, cat)
-import qualified Pipes.Prelude as P
+import           Data.List               (group, sort, sortOn)
+import           Pipes                   (Pipe, cat)
+import qualified Pipes.Prelude           as P
 
 -- |A datatype to represent a single genotype call
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall deriving (Show, Eq)
@@ -34,7 +34,7 @@ callToDosage refA altA call = case call of
                       | otherwise                -> Nothing
     MissingCall -> Nothing
 
--- |Make a call from alleles 
+-- |Make a call from alleles
 callGenotypeFromPileup :: CallingMode -> Int -> String -> IO Call
 callGenotypeFromPileup mode minDepth alleles =
     if length alleles < minDepth then return MissingCall else
@@ -59,7 +59,7 @@ callMajorityAllele withDownsampling minDepth alleles = do
                     r <- sampleWithoutReplacement listA 1
                     case r of
                         Just [r'] -> return r'
-                        _ -> error "should not happen"
+                        _         -> error "should not happen"
             return $ HaploidCall a
 
 -- |Find the majority allele(s)
@@ -74,18 +74,18 @@ callRandomAllele :: String -> IO Call
 callRandomAllele alleles = do
     res <- sampleWithoutReplacement alleles 1
     case res of
-        Nothing -> return MissingCall
+        Nothing  -> return MissingCall
         Just [a] -> return $ HaploidCall a
-        _ -> error "should not happen"
+        _        -> error "should not happen"
 
 -- |call two random alleles
 callRandomDiploid :: String -> IO Call
 callRandomDiploid alleles = do
     res <- sampleWithoutReplacement alleles 2
     case res of
-        Nothing -> return MissingCall
+        Nothing       -> return MissingCall
         Just [a1, a2] -> return $ DiploidCall a1 a2
-        _ -> error "should not happen"
+        _             -> error "should not happen"
 
 -- the basic information stream is a tuple of a PileupRow (if data is present at a SNP), and a FreqSumEntry that contains the calls.
 -- For Eigenstrat and Plink we don't need the PileupRow, but for VCF, we can store additional information beyond the mere calls,

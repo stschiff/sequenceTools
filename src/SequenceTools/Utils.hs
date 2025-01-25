@@ -1,18 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 module SequenceTools.Utils (versionInfoOpt, versionInfoText, sampleWithoutReplacement,
-    freqSumToEigenstrat, dosageToEigenstratGeno, UserInputException(..)) where 
+    freqSumToEigenstrat, dosageToEigenstratGeno, UserInputException(..)) where
 
-import SequenceFormats.FreqSum (FreqSumEntry(..))
-import SequenceFormats.Eigenstrat (EigenstratSnpEntry(..), GenoLine, GenoEntry(..))
-import SequenceFormats.Utils (Chrom(..))
+import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
+                                             GenoEntry (..), GenoLine)
+import           SequenceFormats.FreqSum    (FreqSumEntry (..))
+import           SequenceFormats.Utils      (Chrom (..))
 
-import Control.Exception (Exception)
-import qualified Data.ByteString.Char8 as B
-import Data.Vector (fromList)
-import Data.Version (showVersion)
-import qualified Options.Applicative as OP
-import Paths_sequenceTools (version)
-import System.Random (randomRIO)
+import           Control.Exception          (Exception)
+import qualified Data.ByteString.Char8      as B
+import           Data.Vector                (fromList)
+import           Data.Version               (showVersion)
+import qualified Options.Applicative        as OP
+import           Paths_sequenceTools        (version)
+import           System.Random              (randomRIO)
 
 data UserInputException = UserInputException String deriving (Show)
 instance Exception UserInputException
@@ -40,11 +41,11 @@ sampleWithoutReplacement = go []
 -- |convert a freqSum entry to an eigenstrat SNP entry
 freqSumToEigenstrat :: FreqSumEntry -> (EigenstratSnpEntry, GenoLine)
 freqSumToEigenstrat (FreqSumEntry chrom@(Chrom c) pos maybeSnpId maybeGeneticPos ref alt calls) =
-    let snpId_ = case maybeSnpId of 
+    let snpId_ = case maybeSnpId of
             Just id_ -> id_
-            Nothing -> c <> "_" <> B.pack (show pos)
+            Nothing  -> c <> "_" <> B.pack (show pos)
         geneticPos = case maybeGeneticPos of
-            Just p -> p
+            Just p  -> p
             Nothing -> 0.0
         snpEntry = EigenstratSnpEntry chrom pos geneticPos snpId_ ref alt
         geno = fromList . map dosageToEigenstratGeno $ calls
@@ -52,10 +53,10 @@ freqSumToEigenstrat (FreqSumEntry chrom@(Chrom c) pos maybeSnpId maybeGeneticPos
 
 -- |convert a Dosage to an eigenstrat-encoded genotype
 dosageToEigenstratGeno :: Maybe (Int, Int) -> GenoEntry
-dosageToEigenstratGeno Nothing = Missing
+dosageToEigenstratGeno Nothing       = Missing
 dosageToEigenstratGeno (Just (0, 1)) = HomRef
 dosageToEigenstratGeno (Just (1, 1)) = HomAlt
 dosageToEigenstratGeno (Just (0, 2)) = HomRef
 dosageToEigenstratGeno (Just (1, 2)) = Het
 dosageToEigenstratGeno (Just (2, 2)) = HomAlt
-dosageToEigenstratGeno c = error ("unknown genotype " ++ show c)
+dosageToEigenstratGeno c             = error ("unknown genotype " ++ show c)
