@@ -12,13 +12,16 @@ import           SequenceFormats.Pileup       (PileupRow (..),
 import           SequenceFormats.Plink        (PlinkPopNameMode (..),
                                                eigenstratInd2PlinkFam,
                                                writePlink)
-import           SequenceFormats.Utils        (SeqFormatException (..))
+import           SequenceFormats.Utils        (Chrom (..),
+                                               SeqFormatException (..))
+import           SequenceFormats.VCF          (VCFentry (..), VCFheader(..), printVCFtoStdOut)
 import           SequenceTools.PileupCaller   (CallingMode (..),
                                                TransitionsMode (..),
                                                callGenotypeFromPileup,
                                                callToDosage,
                                                cleanSSdamageAllSamples,
-                                               filterTransitions)
+                                               filterTransitions,
+                                               computeAlleleFreq)
 import           SequenceTools.Utils          (UserInputException (..),
                                                freqSumToEigenstrat,
                                                versionInfoOpt, versionInfoText)
@@ -28,12 +31,14 @@ import           Control.Exception            (catch, throwIO)
 import           Control.Monad                (forM_, when)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ReaderT, asks, runReaderT)
+import           Control.Monad.Trans.Reader   (ReaderT, ask, asks, runReaderT)
+import qualified Data.ByteString.Char8        as B
 import           Data.IORef                   (IORef, modifyIORef', newIORef,
                                                readIORef)
+import           Data.List                    (intercalate)
 import           Data.List.Split              (splitOn)
 import qualified Data.Vector.Unboxed.Mutable  as V
-import           Data.Version                 (showVersion)
+import           Data.Version                 (Version, showVersion)
 import qualified Options.Applicative          as OP
 import           Paths_sequenceTools          (version)
 import           Pipes                        (Producer, for, runEffect, yield,
@@ -41,6 +46,7 @@ import           Pipes                        (Producer, for, runEffect, yield,
 import           Pipes.OrderedZip             (orderCheckPipe, orderedZip)
 import qualified Pipes.Prelude                as P
 import           Pipes.Safe                   (SafeT, runSafeT)
+import           System.Environment           (getArgs, getProgName)
 import           System.IO                    (hPutStrLn, stderr)
 import           System.Random                (mkStdGen, setStdGen)
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
@@ -48,7 +54,7 @@ import           Text.Printf                  (printf)
 
 data OutFormat = EigenstratFormat FilePath Bool
                | PlinkFormat FilePath PlinkPopNameMode Bool
-               | VCFformat FilePath
+               | VCFformat
                | FreqSumFormat deriving (Show)
 
 data ProgOpt = ProgOpt
@@ -185,8 +191,7 @@ argParser = ProgOpt <$> parseCallingMode
         \to pileup data with actual chromosome names X, Y and MT (or chrX, chrY and chrMT, respectively).")
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseZipOut) <|>
         (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode <*> parseZipOut) <|>
-        (VCFformat <$> parseVCFfile) <|>
-        pure FreqSumFormat
+        parseVCFformat <|> pure FreqSumFormat
     parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <> OP.help "GZip the output genotype files. Filenames will be appended with '.gz'.")
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
@@ -209,9 +214,7 @@ argParser = ProgOpt <$> parseCallingMode
     parsePlinkPopBoth = OP.flag' PlinkPopNameAsBoth (OP.long "popNameAsBoth" <> OP.help "Only valid for Plink Output: \
         \Write the population name into both the first and last column of the fam file, so both as Family-ID and as a \
         \Phenotype according to the Plink Spec. By default, the population name is specified only as the first column (family name in the Plink spec)")
-    parseVCFfile = OP.strOption (OP.long "vcfFile" <> OP.short 'v' <> OP.metavar "<FILE>" <>
-        OP.help "Output in VCF format to the filename specified. Note that the file ending .vcf should be included here. \
-        \Alternatively, one may use the ending .vcf.gz, in which case the output is automatically gzipped.")
+    parseVCFformat = OP.flag' VCFformat (OP.long "vcf" <> OP.help "output VCF format to stdout")
     parseSampleNames = parseSampleNameList <|> parseSampleNameFile
     parseSampleNameList = OP.option (Left . splitOn "," <$> OP.str)
         (OP.long "sampleNames" <> OP.metavar "NAME1,NAME2,..." <>
@@ -279,16 +282,16 @@ runMain = do
     case outFormat of
         FreqSumFormat -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputFreqSum (freqSumProducer >-> map snd)
+            outputFreqSum (freqSumProducer >-> P.map snd)
         EigenstratFormat outPrefix zipOut -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputEigenStratOrPlink outPrefix zipOut popNames Nothing (freqSumProducer >-> map snd)
+            outputEigenStratOrPlink outPrefix zipOut popNames Nothing (freqSumProducer >-> P.map snd)
         PlinkFormat outPrefix popNameMode zipOut -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) (freqSumProducer >-> map snd)
-        VCFformat vcfFile ->
+            outputEigenStratOrPlink outPrefix zipOut popNames (Just popNameMode) (freqSumProducer >-> P.map snd)
+        VCFformat -> do
             freqSumProducer <- pileupToFreqSum pileupProducer
-            outputVCF vcfFile popNames freqSumProducer
+            outputVCF popNames freqSumProducer
     outputStats
 
 pileupToFreqSum :: Producer PileupRow (SafeT IO) () -> App (Producer (Maybe PileupRow, FreqSumEntry) (SafeT IO) ())
@@ -304,7 +307,7 @@ pileupToFreqSum pileupProducer = do
     mode <- asks envCallingMode
     keepInCongruentReads <- asks envKeepInCongruentReads
     transitionsMode <- asks envTransitionsMode
-    let singleStrandMode = (transisitionsMode == SingleStrandMode)
+    let singleStrandMode = (transitionsMode == SingleStrandMode)
     minDepth <- asks envMinDepth
     readStats <- asks envStats
     let ret = Pipes.for jointProd $ \jointEntry ->
@@ -386,15 +389,18 @@ outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProdu
                 in  (\g s i -> writePlink g s i famEntries)
     lift . runEffect $ freqSumProducer >-> P.map freqSumToEigenstrat >-> writeFunc genoOut snpOut indOut
 
-outputVCF :: FilePath -> [String] -> Producer (Maybe PileupRow, FreqSumEntry) (SafeT IO) () -> App ()
-outputVCF vcfFile popNames freqSumProd = do
-    sampleNames <- asks envSampleNames
+outputVCF :: [String] -> Producer (Maybe PileupRow, FreqSumEntry) (SafeT IO) () -> App ()
+outputVCF popNames freqSumProd = do
+    sampleNames <- map B.pack <$> asks envSampleNames
     version <- asks envVersion
     env <- ask
-    let metaInfoLines = [
+    prog_name <- liftIO $ getProgName
+    prog_args <- liftIO $ getArgs
+    let command_line = prog_name ++ " " ++ intercalate " " prog_args
+    let metaInfoLines = map B.pack [
             "##fileformat=VCFv4.2",
             "##source=pileupCaller_v" ++ showVersion version,
-            "##options=" ++ summariseOptions env
+            "##command_line=" ++ command_line,
             "##INFO=<ID=NS,Number=1,Type=Integer,Description=\"Number of Samples With Data\">",
             "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Total Depth\">",
             "##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele Frequency\">",
@@ -404,27 +410,51 @@ outputVCF vcfFile popNames freqSumProd = do
             "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">",
             "##FORMAT=<ID=DP2,Number=2,Type=Integer,Description=\"Nr of Reads supporting each of the two alleles\">"]
         vcfh = VCFheader metaInfoLines sampleNames
-    lift . runEffect $ freqSumProd >-> P.map (\(mpr, fse) -> createVcfEntry mpr fse) >-> writeVCFfile vcfFile vcfh
+    lift . runEffect $ freqSumProd >-> P.map (\(mpr, fse) -> createVcfEntry mpr fse) >-> printVCFtoStdOut vcfh
 
 createVcfEntry :: Maybe PileupRow -> FreqSumEntry -> VCFentry
 createVcfEntry maybePileupRow (FreqSumEntry chrom@(Chrom c) pos maybeSnpId maybeGeneticPos ref alt calls) =
-    let nrMissing = length . filter (==Nothing) $ calls
-    let nrSamples = length calls
-    let filterString =
-            if nrMissing * 10 < nrSamples then "s10;s50"
-            else if nrMissing * 2 < nrSamples then "s50"
-            else "PASS"
-    let totalDepth = case maybePileupRow of
-            Nothing -> 0
-            Just pr -> sum . map length . pileupBases $ pr 
-        nrSamplesWithData = nrSamples - nrMissing
-        alleleFreq = computeAlleleFreq calls
-        infofields = [
-            B.pack $ "NS=" ++ show nrSamplesWithData,
-            B.pack $ "DP=" ++ show totalDepth,
-            B.pack $ "AF=" ++ show alleleFreq]
-    case maybePileupRow of
-        Nothing -> VCFentry chrom pos maybeSnpId (B.pack [ref]) [B.pack [alt]] Nothing (Just filterString) infoFields genotypeInfo
+    VCFentry chrom pos maybeSnpId (B.pack [ref]) [B.pack [alt]] Nothing (Just filterString) infoFields genotypeInfos
+  where
+    nrMissing = length . filter (==Nothing) $ calls
+    nrSamples = length calls
+    filterString =
+        if nrMissing * 10 < nrSamples then "s10;s50"
+        else if nrMissing * 2 < nrSamples then "s50"
+        else "PASS"
+    totalDepth = case maybePileupRow of
+        Nothing -> 0
+        Just pr -> sum . map length . pileupBases $ pr
+    nrSamplesWithData = nrSamples - nrMissing
+    alleleFreq = computeAlleleFreq calls
+    infoFields = [
+        B.pack $ "NS=" ++ show nrSamplesWithData,
+        B.pack $ "DP=" ++ show totalDepth,
+        B.pack $ "AF=" ++ show alleleFreq]
+    formatField = case maybePileupRow of
+        Nothing -> ["GT"]
+        Just pr -> ["GT", "DP", "DP2"]
+    genotypeFields = do -- list monad over samples
+        i <- [0 .. (nrSamples - 1)]
+        let c = calls !! i
+        let gt = case c of
+                Nothing     -> "."
+                Just (0, 1) -> "0"
+                Just (1, 1) -> "1"
+                Just (0, 2) -> "0/0"
+                Just (1, 2) -> "0/1"
+                Just (2, 2) -> "1/1"
+                _           -> error "should never happen"
+        case maybePileupRow of
+            Nothing -> return [gt]
+            Just pr -> do
+                let bases = pileupBases pr !! i
+                let dp = length bases
+                let dpRef = length . filter (==ref) $ bases
+                let dpAlt = length . filter (==alt) $ bases
+                return [gt, B.pack $ show dp, B.pack $ show dpRef ++ "," ++ show dpAlt]
+    genotypeInfos = Just (formatField, genotypeFields)
+
 
 outputStats :: App ()
 outputStats = do

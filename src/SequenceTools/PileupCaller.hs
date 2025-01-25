@@ -2,10 +2,11 @@
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
     callRandomDiploid, CallingMode(..),
-    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples) where
+    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples,
+    computeAlleleFreq) where
 
 import SequenceFormats.FreqSum (FreqSumEntry(..))
-import SequenceFormats.Pileup (Strand(..))
+import SequenceFormats.Pileup (Strand(..), PileupRow(..))
 import SequenceTools.Utils (sampleWithoutReplacement)
 
 import Data.List (sortOn, group, sort)
@@ -124,7 +125,7 @@ removeReads strand bases strands = [b | (b, s) <- zip bases strands, s /= strand
 
 computeAlleleFreq :: [Maybe (Int, Int)] -> Maybe Double
 computeAlleleFreq dosages =
-    let nrTotalAlleles = map (maybe 0 snd) dosages
-        nrNonRefAlleles = map (maybe 0 fst) dosages
-    if nrTotalAlleles == 0 then Nothing else
-        Just (fromIntegral nrNonRefAlleles / fromIntegral nrTotalAlleles)
+    let nrTotalAlleles = sum . map (maybe 0 snd) $ dosages
+        nrNonRefAlleles = sum . map (maybe 0 fst) $ dosages
+    in  if nrTotalAlleles == 0 then Nothing else
+            Just (fromIntegral nrNonRefAlleles / fromIntegral nrTotalAlleles)
