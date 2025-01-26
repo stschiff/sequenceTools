@@ -9,7 +9,8 @@ import           SequenceFormats.FreqSum         (FreqSumEntry (..),
                                                   FreqSumHeader (..),
                                                   printFreqSumStdOut)
 import           SequenceFormats.Pileup          (PileupRow (..),
-                                                  readPileupFromStdIn)
+                                                  readPileupFromStdIn,
+                                                  Strand(..))
 import           SequenceFormats.Plink           (PlinkPopNameMode (..),
                                                   eigenstratInd2PlinkFam,
                                                   writePlink)
@@ -408,7 +409,7 @@ outputVCF popNames freqSumProd = do
             "##FILTER=<ID=s10,Description=\"Less than 10% of samples have data\">",
             "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">",
             "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">",
-            "##FORMAT=<ID=DP2,Number=2,Type=Integer,Description=\"Nr of Reads supporting each of the two alleles\">"]
+            "##FORMAT=<ID=DP8,Number=8,Type=Integer,Description=\"Nr of Reads supporting A,C,G,T in forward strand, followed by the same quartet in reverse strand\">"]
         vcfh = VCFheader metaInfoLines sampleNames
     lift . runEffect $ freqSumProd >-> P.map (\(mpr, fse) -> createVcfEntry mpr fse) >-> printVCFtoStdOut vcfh
 
@@ -419,8 +420,8 @@ createVcfEntry maybePileupRow (FreqSumEntry chrom pos maybeSnpId _ ref alt calls
     nrMissing = length . filter (==Nothing) $ calls
     nrSamples = length calls
     filterString =
-        if nrMissing * 10 < nrSamples then "s10;s50"
-        else if nrMissing * 2 < nrSamples then "s50"
+        if nrMissing * 10 > 9 * nrSamples then "s10;s50"
+        else if nrMissing * 2 > nrSamples then "s50"
         else "PASS"
     totalDepth = case maybePileupRow of
         Nothing -> 0
@@ -429,11 +430,15 @@ createVcfEntry maybePileupRow (FreqSumEntry chrom pos maybeSnpId _ ref alt calls
     alleleFreq = computeAlleleFreq calls
     infoFields = [
         B.pack $ "NS=" ++ show nrSamplesWithData,
-        B.pack $ "DP=" ++ show totalDepth,
-        B.pack $ "AF=" ++ show alleleFreq]
+        B.pack $ "DP=" ++ show totalDepth] ++ 
+        case alleleFreq of
+            Just f ->
+                let roundedFreq = fromIntegral (round (f * 100.0)) / 100.0 :: Double
+                in  [B.pack $ "AF=" ++ show roundedFreq]
+            Nothing -> []
     formatField = case maybePileupRow of
         Nothing -> ["GT"]
-        Just _ -> ["GT", "DP", "DP2"]
+        Just _ -> ["GT", "DP", "DP8"]
     genotypeFields = do -- list monad over samples
         i <- [0 .. (nrSamples - 1)]
         let ca = calls !! i
@@ -449,10 +454,13 @@ createVcfEntry maybePileupRow (FreqSumEntry chrom pos maybeSnpId _ ref alt calls
             Nothing -> return [gt]
             Just pr -> do
                 let bases = pileupBases pr !! i
+                let strands = pileupStrandInfo pr !! i
                 let dp = length bases
-                let dpRef = length . filter (==ref) $ bases
-                let dpAlt = length . filter (==alt) $ bases
-                return [gt, B.pack $ show dp, B.pack $ show dpRef ++ "," ++ show dpAlt]
+                let dp8 = do -- list monad
+                        strand <- [ForwardStrand, ReverseStrand] -- outer loop
+                        allele <- ['A', 'C', 'G', 'T'] -- inner loop
+                        return . show . length . filter (\(a, s) -> a == allele && s == strand) $ zip bases strands
+                return [gt, B.pack $ show dp, B.pack $ intercalate "," dp8]
     genotypeInfos = Just (formatField, genotypeFields)
 
 
