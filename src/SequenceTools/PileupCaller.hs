@@ -89,7 +89,7 @@ callRandomDiploid alleles = do
 
 -- the basic information stream is a tuple of a PileupRow (if data is present at a SNP), and a FreqSumEntry that contains the calls.
 -- For Eigenstrat and Plink we don't need the PileupRow, but for VCF, we can store additional information beyond the mere calls,
--- that's why we're streaming both, to have an output-agnostic machinery.
+-- that's why we're streaming both, to have an output-agnostic stream.
 filterTransitions :: (Monad m) => TransitionsMode -> Pipe (Maybe PileupRow, FreqSumEntry) (Maybe PileupRow, FreqSumEntry) m ()
 filterTransitions transversionsMode =
     case transversionsMode of
