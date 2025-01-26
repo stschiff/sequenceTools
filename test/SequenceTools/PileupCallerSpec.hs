@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module SequenceTools.PileupCallerSpec (spec) where
 
+import           SequenceFormats.Pileup     (PileupRow)
 import           SequenceTools.PileupCaller (Call (..), CallingMode (..),
                                              TransitionsMode (..),
                                              callGenotypeFromPileup,
@@ -146,27 +147,30 @@ testFreqSumToEigenstrat = describe "freqSumtoEigenstrat" $ do
         freqSumToEigenstrat (fs {fsSnpId = Just "rs123"}) `shouldBe` (es {snpId = "rs123"}, genoLine)
 
 
-mockFreqSumData :: [FreqSumEntry]
+mockFreqSumData :: [(Maybe PileupRow, FreqSumEntry)]
 mockFreqSumData = [
-    FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
-    FreqSumEntry (Chrom "1") 2000 (Just "rs2") Nothing 'C' 'T' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
-    FreqSumEntry (Chrom "1") 3000 (Just "rs3") Nothing 'A' 'G' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
-    FreqSumEntry (Chrom "2") 1000 (Just "rs4") Nothing 'A' 'G' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
-    FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
-    FreqSumEntry (Chrom "2") 3000 (Just "rs6") Nothing 'T' 'C' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]]
+    (Nothing, FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]),
+    (Nothing, FreqSumEntry (Chrom "1") 2000 (Just "rs2") Nothing 'C' 'T' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]),
+    (Nothing, FreqSumEntry (Chrom "1") 3000 (Just "rs3") Nothing 'A' 'G' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]),
+    (Nothing, FreqSumEntry (Chrom "2") 1000 (Just "rs4") Nothing 'A' 'G' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]),
+    (Nothing, FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]),
+    (Nothing, FreqSumEntry (Chrom "2") 3000 (Just "rs6") Nothing 'T' 'C' [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)])]
 
 testFilterTransitions :: Spec
 testFilterTransitions = describe "filterTransitions" $ do
     it "should remove transitions with SkipTransitions" $ do
-        let r = P.toList $ each mockFreqSumData >-> filterTransitions SkipTransitions
-        r `shouldBe` [
+        let r = P.toList $ each mockFreqSumData >->
+                    filterTransitions SkipTransitions
+        map snd r `shouldBe` [
             FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C'
                 [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
             FreqSumEntry (Chrom "2") 2000 (Just "rs5") Nothing 'T' 'A'
                 [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)]]
     it "should mark transitions as missing with TransitionsMissing" $ do
-        let r = P.toList $ each mockFreqSumData >-> filterTransitions TransitionsMissing
-        r `shouldBe` [
+        let r = P.toList $
+                    each mockFreqSumData >->
+                    filterTransitions TransitionsMissing
+        map snd r `shouldBe` [
             FreqSumEntry (Chrom "1") 1000 (Just "rs1") Nothing 'A' 'C'
                 [Just (1, 2), Just (2, 2), Nothing, Just (0, 2), Just (0, 2)],
             FreqSumEntry (Chrom "1") 2000 (Just "rs2") Nothing 'C' 'T' [Nothing, Nothing, Nothing, Nothing, Nothing],
