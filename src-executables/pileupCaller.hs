@@ -198,7 +198,10 @@ argParser = ProgOpt <$> parseCallingMode
     parseFormat = (EigenstratFormat <$> parseEigenstratPrefix <*> parseZipOut) <|>
         (PlinkFormat <$> parsePlinkPrefix <*> parsePlinkPopMode <*> parseZipOut) <|>
         parseVCFformat <|> pure FreqSumFormat
-    parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <> OP.help "GZip the output genotype files. Filenames will be appended with '.gz'.")
+    parseZipOut = OP.switch (OP.long "--zip" <> OP.short 'z' <>
+        OP.help "GZip the output Eigenstrat or Plink genotype and SNP files. \
+        \Filenames will be appended with '.gz'. To zip FreqSum or VCF output, just zip the standard output of this\
+        \ program, for example `pileupCaller ... --vcf | gzip -c > out.vcf.gz")
     parseEigenstratPrefix = OP.strOption (OP.long "eigenstratOut" <> OP.short 'e' <>
         OP.metavar "<FILE_PREFIX>" <>
         OP.help "Set Eigenstrat as output format. Specify the filenames for the EigenStrat \
