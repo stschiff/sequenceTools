@@ -1,5 +1,5 @@
 name:                sequenceTools
-version:             2.0.0.0
+version:             1.6.0.0
 synopsis:            A package with tools for processing DNA sequencing data
 description:         The tools in this package process sequencing Data, in particular from ancient DNA sequencing libraries. Key tool in this package is pileupCaller, a tool to randomly sample genotypes from sequencing data.
 license:             GPL-3
