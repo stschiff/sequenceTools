@@ -1,5 +1,7 @@
 # Changelog
 
+- V 1.6.0.0: 
+    - pileupCaller now supports writing of VCF (Variant Call Format), via the standard output. See option --vcf and the Readme.
 - V 1.5.4.0:
    - updated sequence-formats dependency allows more lenient parsing of pileup-data, now also allowing for arbitrary reference alleles (not just ACTGN). This won't affect calling (reads that support an allele that is not in the SNP-file input are treated as before), but will be less disruptive when parsing pileup-input, for example without a bed-file in samtools.
    - improved error output for parsing problems with pileup-format data. Now only a small part of the problematic chunk is output, hopefully easing error interpretation in such cases
