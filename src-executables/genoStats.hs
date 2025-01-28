@@ -15,6 +15,7 @@ import           Control.Applicative        ((<|>))
 import           Control.Foldl              (Fold (..), purely)
 import           Control.Monad              (forM_)
 import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import qualified Data.ByteString.Char8      as B
 import qualified Data.Vector                as V
 import           Lens.Family2               (view)
 import qualified Options.Applicative        as OP
@@ -94,7 +95,7 @@ runWithEigenstrat genoFile snpFile indFile = do
     (indEntries, genoStream) <- readEigenstrat genoFile snpFile indFile
     let names = [name | EigenstratIndEntry name _ _ <- indEntries]
     let prod = genoStream >-> P.map (\(EigenstratSnpEntry chrom _ _ _ _ _, genoLine) -> InputEntry chrom genoLine)
-    return (names, prod)
+    return (map B.unpack names, prod)
 
 runStats :: (MonadIO m) => [String] -> Producer InputEntry m () ->
     Producer (Chrom, StatsReportAllSamples) m ()

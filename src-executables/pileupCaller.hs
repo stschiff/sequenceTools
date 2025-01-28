@@ -385,7 +385,7 @@ outputEigenStratOrPlink outPrefix zipOut popNames maybePlinkPopMode freqSumProdu
             (Just _, True)  -> (outPrefix <> ".bim.gz", outPrefix <> ".fam", outPrefix <> ".bed.gz")
             (Nothing, False) -> (outPrefix <> ".snp", outPrefix <> ".ind", outPrefix <> ".geno")
             (Nothing, True) -> (outPrefix <> ".snp.gz", outPrefix <> ".ind", outPrefix <> ".geno.gz")
-    let indEntries = [EigenstratIndEntry n Unknown p | (n, p) <- zip sampleNames popNames]
+    let indEntries = [EigenstratIndEntry (B.pack n) Unknown (B.pack p) | (n, p) <- zip sampleNames popNames]
     let writeFunc = case maybePlinkPopMode of
             Nothing -> (\g s i -> writeEigenstrat g s i indEntries)
             Just popMode ->
@@ -436,7 +436,7 @@ createVcfEntry maybePileupRow (FreqSumEntry chrom pos maybeSnpId _ ref alt calls
         B.pack $ "DP=" ++ show totalDepth] ++ 
         case alleleFreq of
             Just f ->
-                let roundedFreq = fromIntegral (round (f * 100.0)) / 100.0 :: Double
+                let roundedFreq = fromIntegral (round (f * 100.0) :: Int) / 100.0 :: Double
                 in  [B.pack $ "AF=" ++ show roundedFreq]
             Nothing -> []
     formatField = case maybePileupRow of
