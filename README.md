@@ -258,12 +258,12 @@ So there are two options if you have Paired-end sequencing data:
 2) Use all reads but do _not_ use `--singleStrandMode`. Instead, in such cases I recommend to trim reads from both ends to remove ancient DNA damage. Depending on the details of the library construction, you may have UDG-treated data, in which case fewer basepairs would have to be trimmed.
 
 ### VCF output
-VCF output was added in version 1.6.0.0. The VCF format is specified in detail at https://samtools.github.io/hts-specs/VCFv4.5.pdf. I just mention two specifics. First, with calling modes `--randomHaploid` and `--majorityCall`, the output genotypes will be haploid. This means that instead of genotypes like `0/0`, `0/1`, `1/1` or `./.`, you will instead just see `0`, `1` or `.`. Second, I added some possibly useful filters and statistics to the output, which are described in the header of the VCF:
+VCF output was added in version 1.6.0.0. The VCF format is specified in detail at https://samtools.github.io/hts-specs/VCFv4.5.pdf. I just mention two specifics. First, with calling modes `--randomHaploid` and `--majorityCall`, the output genotypes will be haploid. This means that instead of genotypes like `0/0`, `0/1`, `1/1` or `./.`, you will instead just see `0`, `1` or `.`. Second, I added some possibly useful filters and statistics to the output, which are described in the header of the VCF. Here is the beginning of an example output:
 
 ```
 ##fileformat=VCFv4.2
 ##source=pileupCaller_v1.6.0.0
-##command_line=pileupCaller --randomHaploid -f 1240k_eigenstrat_snp_short.snp.txt --sampleNames 1,2,3,4 --vcf
+##command_line=pileupCaller --randomHaploid --sampleNames I1,I2,I3,I4 -f test/testDat/1240k_eigenstrat_snp_short.snp.txt --vcf
 ##group_names=Unknown,Unknown,Unknown,Unknown
 ##INFO=<ID=NS,Number=1,Type=Integer,Description="Number of Samples With Data">
 ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
@@ -273,9 +273,18 @@ VCF output was added in version 1.6.0.0. The VCF format is specified in detail a
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">
 ##FORMAT=<ID=DP8,Number=8,Type=Integer,Description="Nr of Reads supporting A,C,G,T in forward strand, followed by the same quartet in reverse strand">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	I1	I2	I3	I4
+1	752566	rs3094315	G	A	.	PASS	NS=3;DP=9;AF=1.0	GT:DP:DP8	1:2:1,0,0,0,0,0,1,0	1:4:2,0,0,0,2,0,0,0	1:3:1,0,0,0,2,0,0,0	.:0:0,0,0,0,0,0,0,0
+1	776546	rs12124819	A	G	.	PASS	NS=3;DP=6;AF=0.0	GT:DP:DP8	0:1:0,0,0,0,1,0,0,0	0:4:2,0,0,0,2,0,0,0	0:1:0,0,0,0,1,0,0,0	.:0:0,0,0,0,0,0,0,0
+1	832918	rs28765502	T	C	.	PASS	NS=4;DP=8;AF=0.25	GT:DP:DP8	1:1:0,1,0,0,0,0,0,0	0:4:0,0,0,2,0,0,0,2	0:2:0,0,0,0,0,0,0,2	0:1:0,0,0,1,0,0,0,0
+1	842013	rs7419119	T	G	.	PASS	NS=3;DP=19;AF=0.0	GT:DP:DP8	0:2:0,0,0,1,0,0,0,1	0:11:0,0,0,5,0,0,0,6	0:6:0,0,0,1,0,0,0,5	.:0:0,0,0,0,0,0,0,0
+1	846864	rs950122	G	C	.	PASS	NS=4;DP=20;AF=0.0	GT:DP:DP8	0:3:0,0,1,0,0,0,2,0	0:8:0,0,4,0,0,0,4,0	0:8:0,0,3,0,0,0,5,0	0:1:0,0,0,0,0,0,1,0
+1	869303	rs113171913	C	T	.	PASS	NS=3;DP=5;AF=0.67	GT:DP:DP8	1:2:0,0,0,2,0,0,0,0	1:1:0,0,0,1,0,0,0,0	0:2:0,1,0,0,0,1,0,0	.:0:0,0,0,0,0,0,0,0
+1	891021	rs13302957	G	A	.	PASS	NS=2;DP=14;AF=1.0	GT:DP:DP8	.:0:0,0,0,0,0,0,0,0	1:7:2,0,0,0,5,0,0,0	1:7:4,0,0,0,3,0,0,0	.:0:0,0,0,0,0,0,0,0
+
 ```
 
-As you can see, Info fields NS, DP and AF are added and defined, as well as two filters which might come in handy. Also, beyond the required genotype `GT` tag, I added two per-sample tags `DP` and `DP8` as defined in the header. 
+As you can see, Info fields NS, DP and AF are added and defined, as well as two filters which might come in handy. Also, beyond the required genotype `GT` tag, I added two per-sample tags `DP` and `DP8` as defined in the header.
 
 ### Summary Statistics
 
