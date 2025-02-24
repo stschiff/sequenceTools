@@ -43,6 +43,8 @@ Important Note: You should definitely use the `-B` flag, which disables base ali
 
 In the above command line, if you use a positions-file, it should either contain positions (0-based) or a bed file (see samtools manual for details). The output is a simple text file with all positions that could be genotyped in the three samples.
 
+Note that the `<list_of_positions.txt>` file is strictly optional, as pileupCaller is happy to handle sites that it then discards if they are not in the list of alleles to be pulled down. However, it makes the processing much faster, if you already restrict the pileup to the required positions, so this is recommended.
+
 Next, you need to run pileupCaller, which you run like this:
 
     pileupCaller --randomHaploid --sampleNames Sample1,Sample2,Sample3 \
@@ -63,14 +65,14 @@ Finally, the `-e` option specifies Eigenstrat as output format and gives the pre
 
 Note that you can also fuse the two steps above into one unix pipe:
 
-    samtools mpileup -R -B -q30 -Q30 \
+    samtools mpileup -R -B -q30 -Q30 -l <list_of_positions.txt>\
         -f <reference_genome.fasta> \
         Sample1.bam Sample2.bam Sample3.bam | \
     pileupCaller --randomHaploid --sampleNames Sample1,Sample2,Sample3 \
         --samplePopName MyPop -f <Eigenstrat.snp> \
         -e <My_output_prefix>
 
-Here, I omitted the positions-file in the samtools command, because pileupCaller itself will ensure filtering for the positions listed in the Eigenstrat-Positions file given via option `-f`. Note that `--randomHaploid` is only one way to call genotypes. If you need stricter calling, you may want to try `--majorityCall --downSampling --minDepth 3`, which calls genotypes only on sites with at least three reads, downsamples to three if there are more, and then calls whatever of the two alleles has the majority. This will reduce errors, but also yield less data in case of lower coverage.
+Note that `--randomHaploid` is only one way to call genotypes. If you need stricter calling, you may want to try `--majorityCall --downSampling --minDepth 3`, which calls genotypes only on sites with at least three reads, downsamples to three if there are more, and then calls whatever of the two alleles has the majority. This will reduce errors, but also yield less data in case of lower coverage.
             
 You will possibly encounter an issue: If you have aligned your read data to a version of the reference genome that uses `chr1`, `chr2` and so on as chromosome names, the resulting Eigenstrat file will be valid, but won't merge with other Eigenstrat datasets that use chromosome names `1`, `2` and so on. I would therefore recommend to strip the `chr` from your chromosome names if necessary. You can do that easily using a little UNIX filter using the `sed` tool. In the full pipeline, it looks like this:
 
