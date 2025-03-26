@@ -67,12 +67,6 @@ jobs:
              echo "BINARY_PATH=$newEXE" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Compress binary
-        if: ${{ runner.os != 'macOS' }} # upx is crashing for macOS Ventura or above!
-        uses: svenstaro/upx-action@v2
-        with:
-          files: ${{ steps.binarypath.outputs.BINARY_PATH }}
-
       - name: Upload Release Asset
         id: upload-release-asset
         uses: ncipollo/release-action@v1
