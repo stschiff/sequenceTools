@@ -57,10 +57,8 @@ jobs:
         run: |
              if [ "$RUNNER_OS" == "Windows" ]; then
                  newEXE="pileupCaller-$RUNNER_OS.exe"
-             elif [ "$RUNNER_OS" == "macOS" ]; then
+             else [ "$RUNNER_OS" == "macOS" ]; then
                  newEXE="pileupCaller-$RUNNER_OS-$RUNNER_ARCH"
-             else
-                 newEXE="pileupCaller-$RUNNER_OS"
              fi
              currentEXE="${{ steps.stack.outputs.local-bin }}/pileupCaller"
              mv $currentEXE $newEXE
