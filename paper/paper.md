@@ -41,6 +41,6 @@ Among the options passed to `samtools mpileup`, we highlight the `-B` flag, whic
 
 In terms of output formats, pileupCaller currently supports Eigenstrat, Plink (https://www.cog-genomics.org/plink/2.0/) and VCF [@VCF], with an option to additionally compress the output in gzip-format. Command line options are documented inline via `pileupCaller --help`.
 
-PileupCaller relies on a key Haskell dependency [`sequence-formats`](https://hackage.haskell.org/package/sequence-formats), which was developed alongside the `sequenceTools` package to which pileupCaller belongs. 
+PileupCaller is part of the "sequenceTools" package, which contains multiple other minor scripts and command-line tools, with pileupCaller being the central and most popular tool. The sequenceTools package makes key use of the "sequence-formats" Haskell library [@sequence-formats], which contains parsers for the Pileup-, the Plink-, the Eigenstrat and the VCF-Format.
 
 # References
