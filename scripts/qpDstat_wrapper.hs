@@ -2,26 +2,26 @@
 -- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Applicative (optional)
-import Prelude hiding (FilePath)
-import Turtle
+import           Control.Applicative (optional)
+import           Prelude             hiding (FilePath)
+import           Turtle
 
 data Options = Options {
-    optGeno :: FilePath,
-    optSnp :: FilePath,
-    optInd :: FilePath,
+    optGeno    :: FilePath,
+    optSnp     :: FilePath,
+    optInd     :: FilePath,
     optPopList :: FilePath,
-    optLow :: Maybe Int,
-    optHigh :: Maybe Int
+    optLow     :: Maybe Int,
+    optHigh    :: Maybe Int
 }
 
 main = do
     args <- options "Admixtools qpDstat wrapper" parser
     runManaged $ do
         paramFile <- mktempfile "." "qpDstat_wrapper"
-        let content = [(format ("genotypename:\t"%fp) (optGeno args)), 
-                       (format ("snpname:\t"%fp) (optSnp args)), 
-                       (format ("indivname:\t"%fp) (optInd args)), 
+        let content = [(format ("genotypename:\t"%fp) (optGeno args)),
+                       (format ("snpname:\t"%fp) (optSnp args)),
+                       (format ("indivname:\t"%fp) (optInd args)),
                        (format ("popfilename:\t"%fp) (optPopList args))]
         output paramFile . select . map unsafeTextToLine $ content
         let execParams = ["-p", format fp paramFile] ++

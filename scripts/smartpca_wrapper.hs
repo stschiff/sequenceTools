@@ -2,17 +2,17 @@
 -- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Applicative (optional)
-import Prelude hiding (FilePath)
-import Turtle
+import           Control.Applicative (optional)
+import           Prelude             hiding (FilePath)
+import           Turtle
 
 data Options = Options {
-    optGeno :: FilePath,
-    optSnp :: FilePath,
-    optInd :: FilePath,
-    optOutPrefix :: FilePath,
+    optGeno       :: FilePath,
+    optSnp        :: FilePath,
+    optInd        :: FilePath,
+    optOutPrefix  :: FilePath,
     optLSQproject :: Bool,
-    optPopList :: Maybe FilePath
+    optPopList    :: Maybe FilePath
 }
 
 main = do
@@ -38,7 +38,7 @@ parser :: Parser Options
 parser = Options <$> optPath "geno" 'g' "Genotype File"
                  <*> optPath "snp" 's' "Snp File"
                  <*> optPath "ind" 'i' "Ind File"
-                 <*> optPath "outPrefix" 'o' "Output prefix for *.evec.txt and *.eval.txt output \  
+                 <*> optPath "outPrefix" 'o' "Output prefix for *.evec.txt and *.eval.txt output \
                                               \files"
                  <*> switch "lsqProject" 'l' "set lsqproject option to YES"
                  <*> optional (optPath "popList" 'p' "give poplist file to restrict PCA to \

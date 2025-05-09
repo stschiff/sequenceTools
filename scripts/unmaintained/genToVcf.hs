@@ -1,7 +1,7 @@
-import Data.List.Split (chunksOf, splitOn)
-import Data.List (intercalate)
-import Control.Monad (liftM)
-import System.Environment (getArgs)
+import           Control.Monad      (liftM)
+import           Data.List          (intercalate)
+import           Data.List.Split    (chunksOf, splitOn)
+import           System.Environment (getArgs)
 
 convertLine :: String -> String -> String
 convertLine chr line =

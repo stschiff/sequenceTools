@@ -2,15 +2,16 @@
 module SequenceTools.PileupCaller (callToDosage, Call(..), callGenotypeFromPileup,
     callMajorityAllele, findMajorityAlleles, callRandomAllele,
     callRandomDiploid, CallingMode(..),
-    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples) where
+    TransitionsMode(..), filterTransitions, cleanSSdamageAllSamples,
+    computeAlleleFreq) where
 
-import SequenceFormats.FreqSum (FreqSumEntry(..))
-import SequenceFormats.Pileup (Strand(..))
-import SequenceTools.Utils (sampleWithoutReplacement)
+import           SequenceFormats.FreqSum (FreqSumEntry (..))
+import           SequenceFormats.Pileup  (PileupRow (..), Strand (..))
+import           SequenceTools.Utils     (sampleWithoutReplacement)
 
-import Data.List (sortOn, group, sort)
-import Pipes (Pipe, cat)
-import qualified Pipes.Prelude as P
+import           Data.List               (group, sort, sortOn)
+import           Pipes                   (Pipe, cat)
+import qualified Pipes.Prelude           as P
 
 -- |A datatype to represent a single genotype call
 data Call = HaploidCall Char | DiploidCall Char Char | MissingCall deriving (Show, Eq)
@@ -21,19 +22,19 @@ data CallingMode = MajorityCalling Bool | RandomCalling | RandomDiploidCalling d
 data TransitionsMode = TransitionsMissing | SkipTransitions | SingleStrandMode | AllSites deriving (Eq, Show)
 
 -- |a function to turn a call into the dosage of non-reference alleles
-callToDosage :: Char -> Char -> Call -> Maybe Int
+callToDosage :: Char -> Char -> Call -> Maybe (Int, Int)
 callToDosage refA altA call = case call of
-    HaploidCall a | a == refA -> Just 0
-                  | a == altA -> Just 1
+    HaploidCall a | a == refA -> Just (0, 1)
+                  | a == altA -> Just (1, 1)
                   | otherwise -> Nothing
-    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> Just 0
-                      | (a1, a2) == (refA, altA) -> Just 1
-                      | (a1, a2) == (altA, refA) -> Just 1
-                      | (a1, a2) == (altA, altA) -> Just 2
+    DiploidCall a1 a2 | (a1, a2) == (refA, refA) -> Just (0, 2)
+                      | (a1, a2) == (refA, altA) -> Just (1, 2)
+                      | (a1, a2) == (altA, refA) -> Just (1, 2)
+                      | (a1, a2) == (altA, altA) -> Just (2, 2)
                       | otherwise                -> Nothing
     MissingCall -> Nothing
 
--- |Make a call from alleles 
+-- |Make a call from alleles
 callGenotypeFromPileup :: CallingMode -> Int -> String -> IO Call
 callGenotypeFromPileup mode minDepth alleles =
     if length alleles < minDepth then return MissingCall else
@@ -58,7 +59,7 @@ callMajorityAllele withDownsampling minDepth alleles = do
                     r <- sampleWithoutReplacement listA 1
                     case r of
                         Just [r'] -> return r'
-                        _ -> error "should not happen"
+                        _         -> error "should not happen"
             return $ HaploidCall a
 
 -- |Find the majority allele(s)
@@ -73,28 +74,31 @@ callRandomAllele :: String -> IO Call
 callRandomAllele alleles = do
     res <- sampleWithoutReplacement alleles 1
     case res of
-        Nothing -> return MissingCall
+        Nothing  -> return MissingCall
         Just [a] -> return $ HaploidCall a
-        _ -> error "should not happen"
+        _        -> error "should not happen"
 
 -- |call two random alleles
 callRandomDiploid :: String -> IO Call
 callRandomDiploid alleles = do
     res <- sampleWithoutReplacement alleles 2
     case res of
-        Nothing -> return MissingCall
+        Nothing       -> return MissingCall
         Just [a1, a2] -> return $ DiploidCall a1 a2
-        _ -> error "should not happen"
+        _             -> error "should not happen"
 
-filterTransitions :: (Monad m) => TransitionsMode -> Pipe FreqSumEntry FreqSumEntry m ()
+-- the basic information stream is a tuple of a PileupRow (if data is present at a SNP), and a FreqSumEntry that contains the calls.
+-- For Eigenstrat and Plink we don't need the PileupRow, but for VCF, we can store additional information beyond the mere calls,
+-- that's why we're streaming both, to have an output-agnostic stream.
+filterTransitions :: (Monad m) => TransitionsMode -> Pipe (Maybe PileupRow, FreqSumEntry) (Maybe PileupRow, FreqSumEntry) m ()
 filterTransitions transversionsMode =
     case transversionsMode of
         SkipTransitions ->
-            P.filter (\(FreqSumEntry _ _ _ _ ref alt _) -> isTransversion ref alt)
+            P.filter (\(_, FreqSumEntry _ _ _ _ ref alt _) -> isTransversion ref alt)
         TransitionsMissing ->
-            P.map (\(FreqSumEntry chrom pos id_ gpos ref alt calls) ->
+            P.map (\(mp, FreqSumEntry chrom pos id_ gpos ref alt calls) ->
                 let calls' = if isTransversion ref alt then calls else [Nothing | _ <- calls]
-                in  FreqSumEntry chrom pos id_ gpos ref alt calls')
+                in  (mp, FreqSumEntry chrom pos id_ gpos ref alt calls'))
         _ -> cat
   where
     isTransversion ref alt = not $ isTransition ref alt
@@ -118,3 +122,10 @@ cleanSSdamageAllSamples ref alt basesPerSample strandPerSample
 
 removeReads :: Strand -> String -> [Strand] -> String
 removeReads strand bases strands = [b | (b, s) <- zip bases strands, s /= strand]
+
+computeAlleleFreq :: [Maybe (Int, Int)] -> Maybe Double
+computeAlleleFreq dosages =
+    let nrTotalAlleles = sum . map (maybe 0 snd) $ dosages
+        nrNonRefAlleles = sum . map (maybe 0 fst) $ dosages
+    in  if nrTotalAlleles == 0 then Nothing else
+            Just (fromIntegral nrNonRefAlleles / fromIntegral nrTotalAlleles)

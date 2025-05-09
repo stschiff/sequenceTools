@@ -2,21 +2,21 @@
 -- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Applicative (optional)
-import Prelude hiding (FilePath)
-import Turtle
+import           Control.Applicative (optional)
+import           Prelude             hiding (FilePath)
+import           Turtle
 
 data Options = Options {
-    optGeno1 :: FilePath,
-    optSnp1 :: FilePath,
-    optInd1 :: FilePath,
-    optGeno2 :: FilePath,
-    optSnp2 :: FilePath,
-    optInd2 :: FilePath,
-    optOutPrefix :: FilePath,
-    optAllowDups :: Bool,
+    optGeno1       :: FilePath,
+    optSnp1        :: FilePath,
+    optInd1        :: FilePath,
+    optGeno2       :: FilePath,
+    optSnp2        :: FilePath,
+    optInd2        :: FilePath,
+    optOutPrefix   :: FilePath,
+    optAllowDups   :: Bool,
     optStrandCheck :: Bool,
-    optOutFormat :: Maybe OutFormat
+    optOutFormat   :: Maybe OutFormat
 }
 
 data OutFormat = ANCESTRYMAP | EIGENSTRAT | PED | PACKEDPED | PACKEDANCESTRYMAP

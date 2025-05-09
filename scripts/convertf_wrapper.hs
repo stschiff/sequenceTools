@@ -2,19 +2,19 @@
 -- stack script --resolver lts-14.1 --package turtle
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Applicative (optional)
-import Prelude hiding (FilePath)
-import Turtle
+import           Control.Applicative (optional)
+import           Prelude             hiding (FilePath)
+import           Turtle
 
 data Options = Options {
-    optGeno :: FilePath,
-    optSnp :: FilePath,
-    optInd :: FilePath,
-    optFormat :: FilePath,
+    optGeno    :: FilePath,
+    optSnp     :: FilePath,
+    optInd     :: FilePath,
+    optFormat  :: FilePath,
     optPoplist :: Maybe FilePath,
     optOutGeno :: FilePath,
-    optOutSnp :: FilePath,
-    optOutInd :: FilePath
+    optOutSnp  :: FilePath,
+    optOutInd  :: FilePath
 }
 
 main = do

@@ -1,49 +1,52 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import SeqTools.OrderedZip (orderedZip)
-import SeqTools.VCF (readVCF, VCFheader(..), VCFentry(..))
+import           SeqTools.OrderedZip        (orderedZip)
+import           SeqTools.VCF               (VCFentry (..), VCFheader (..),
+                                             readVCF)
 
-import Control.Error (headErr)
-import Control.Exception.Base (throwIO, AssertionFailed(..))
-import Control.Monad.Random (evalRandIO)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT, asks)
-import qualified Data.Attoparsec.Text as A
-import Data.Char (isSpace)
-import Data.List (sortBy)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import Debug.Trace (trace)
-import qualified Options.Applicative as OP
-import Pipes (Pipe, yield, (>->), runEffect, Producer, Pipe, for, cat)
-import Pipes.Attoparsec (parsed)
-import Pipes.Cliff (CreateProcess(..), CmdSpec(..), pipeOutput, NonPipe(..))
-import Pipes.Cliff.Core (defaultHandler)
-import qualified Pipes.Prelude as P
-import Pipes.Safe (runSafeT, SafeT)
-import Pipes.Safe.Prelude (withFile)
-import Pipes.Text.Encoding (decodeUtf8)
-import qualified Pipes.Text.IO as PT
-import Prelude hiding (FilePath)
-import System.IO (IOMode(..))
-import System.Random (randomRIO, mkStdGen, setStdGen)
-import System.Random.Shuffle (shuffleM)
-import Turtle hiding (tab, cat, stderr)
+import           Control.Error              (headErr)
+import           Control.Exception.Base     (AssertionFailed (..), throwIO)
+import           Control.Monad.Random       (evalRandIO)
+import           Control.Monad.Trans.Class  (lift)
+import           Control.Monad.Trans.Reader (ReaderT, asks, runReaderT)
+import qualified Data.Attoparsec.Text       as A
+import           Data.Char                  (isSpace)
+import           Data.List                  (sortBy)
+import qualified Data.Text                  as T
+import qualified Data.Text.IO               as T
+import           Debug.Trace                (trace)
+import qualified Options.Applicative        as OP
+import           Pipes                      (Pipe, Producer, cat, for,
+                                             runEffect, yield, (>->))
+import           Pipes.Attoparsec           (parsed)
+import           Pipes.Cliff                (CmdSpec (..), CreateProcess (..),
+                                             NonPipe (..), pipeOutput)
+import           Pipes.Cliff.Core           (defaultHandler)
+import qualified Pipes.Prelude              as P
+import           Pipes.Safe                 (SafeT, runSafeT)
+import           Pipes.Safe.Prelude         (withFile)
+import           Pipes.Text.Encoding        (decodeUtf8)
+import qualified Pipes.Text.IO              as PT
+import           Prelude                    hiding (FilePath)
+import           System.IO                  (IOMode (..))
+import           System.Random              (mkStdGen, randomRIO, setStdGen)
+import           System.Random.Shuffle      (shuffleM)
+import           Turtle                     hiding (cat, stderr, tab)
 
 data ProgOpt = ProgOpt {
-    optCallingMode :: CallingMode,
-    optSeed :: Maybe Int,
-    optMinDepth :: Int,
-    optTransversionsOnly :: Bool,
-    optSnpFile :: Maybe FilePath,
-    optRegion :: Text,
-    optOutChrom :: Maybe Text,
-    optReference :: FilePath,
-    optOutFormat :: OutFormat,
+    optCallingMode         :: CallingMode,
+    optSeed                :: Maybe Int,
+    optMinDepth            :: Int,
+    optTransversionsOnly   :: Bool,
+    optSnpFile             :: Maybe FilePath,
+    optRegion              :: Text,
+    optOutChrom            :: Maybe Text,
+    optReference           :: FilePath,
+    optOutFormat           :: OutFormat,
     optEigenstratOutPrefix :: Maybe FilePath,
-    optSamtoolsExe :: FilePath,
-    optBcftoolsExe :: FilePath,
-    optBamFiles :: [FilePath]
+    optSamtoolsExe         :: FilePath,
+    optBcftoolsExe         :: FilePath,
+    optBamFiles            :: [FilePath]
 }
 
 data CallingMode = MajorityCalling | RandomCalling | RareCalling deriving (Show, Read)
@@ -61,13 +64,13 @@ main = OP.execParser parser >>= runSafeT . runReaderT runWithOpts
 argParser :: OP.Parser ProgOpt
 argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
                         parseTransversionsOnly <*> parseSnpFile <*> parseChrom <*>
-                        parseOutChrom <*> parseRef <*> parseFormat <*> parseEigenstratOutPrefix <*> 
+                        parseOutChrom <*> parseRef <*> parseFormat <*> parseEigenstratOutPrefix <*>
                         parseSamtoolsExe <*> parseBcftoolsExe <*> OP.some parseBams
   where
     parseCallingMode = OP.option OP.auto (OP.long "mode" <> OP.short 'm' <>
                        OP.value RandomCalling <> OP.showDefault <> OP.metavar "<MODE>" <>
                        OP.help "specify the mode of calling: MajorityCalling, RandomCalling or \
-                                \RareCalling. MajorityCalling: Pick the allele supported by the \   
+                                \RareCalling. MajorityCalling: Pick the allele supported by the \
                                 \most reads. If equal numbers of Alleles fulfil this, pick one at \
                                 \random. RandomCalling: Pick one read at random. RareCalling: \
                                 \Require a number of reads equal to the minDepth supporting the \
@@ -77,7 +80,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
     parseSeed = OP.option (Just <$> OP.auto) (OP.long "seed" <> OP.value Nothing <>
                 OP.metavar "<RANDOM_SEED>" <> OP.help "random seed used for random calling. If \
                 \not given, use system clock to seed the random number generator")
-    parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <> 
+    parseMinDepth = OP.option OP.auto (OP.long "minDepth" <> OP.short 'd' <> OP.value 1 <>
                                        OP.showDefault <>
                                        OP.metavar "<DEPTH>" <>
                                        OP.help "specify the minimum depth for a call. This has a \
@@ -105,7 +108,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
     parseOutChrom = OP.option (Just . T.pack <$> OP.str) (OP.long "outChrom" <>
                                     OP.metavar "<CHROM>" <>
                                    OP.help "specify the output chromosome name" <> OP.value Nothing)
-    parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <> 
+    parseRef = OP.option (fromText . T.pack <$> OP.str) (OP.long "reference" <> OP.short 'r' <>
                                    OP.metavar "<REF>" <>
                                   OP.help "the reference fasta file")
     parseBams = OP.argument (fromText . T.pack <$> OP.str) (OP.metavar "<BAM_FILE(S)>" <>
@@ -115,7 +118,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
                                      OP.value FreqSumFormat <> OP.showDefault <>
                                      OP.help "specify output format: EigenStrat or FreqSum")
     parseEigenstratOutPrefix = OP.option (Just . fromText . T.pack <$> OP.str)
-                                 (OP.long "eigenstratOutPrefix" <> 
+                                 (OP.long "eigenstratOutPrefix" <>
                                     OP.short 'e' <>
                                  OP.value Nothing <> OP.metavar "<FILE_PREFIX>" <>
                                  OP.help "specify the filenames for the EigenStrat SNP and IND \
@@ -129,7 +132,7 @@ argParser = ProgOpt <$> parseCallingMode <*> parseSeed <*> parseMinDepth <*>
                                   OP.value "bcftools" <> OP.showDefault <>
                                   OP.metavar "<BCFTOOLS_PATH>" <> OP.help "path to the \
                                   \bcftools executable, version >= 1.2")
-    
+
 runWithOpts :: ReaderT ProgOpt (SafeT IO) ()
 runWithOpts = do
     seed <- asks optSeed
@@ -139,11 +142,11 @@ runWithOpts = do
     eigenStratOutPrefix <- asks optEigenstratOutPrefix
     transversionsOnly <- asks optTransversionsOnly
     case seed of
-        Nothing -> return ()
+        Nothing    -> return ()
         Just seed_ -> liftIO . setStdGen $ mkStdGen seed_
     let chrom = head (T.splitOn ":" region)
     let outputChrom = case outChrom of
-            Nothing -> chrom
+            Nothing    -> chrom
             Just label -> label
     (vcfHeader, freqSumProducer) <- runPileup
     -- liftIO $ print vcfHeader
@@ -176,7 +179,7 @@ runWithOpts = do
     isTransversion ref alt = not $ isTransition ref alt
     isTransition ref alt = ((ref == "A") && (alt == "G")) || ((ref == "G") && (alt == "A")) ||
                            ((ref == "C") && (alt == "T")) || ((ref == "T") && (alt == "C"))
-    
+
 runPileup :: ReaderT ProgOpt (SafeT IO) (VCFheader, Producer FreqSumRow (SafeT IO) ())
 runPileup = do
     snpFile <- asks optSnpFile
@@ -224,10 +227,10 @@ runPileupSnpFile fn = do
     return (vcfHeader_, fmap snd jointProdPipe)
   where
     cmp (SnpEntry _ snpPos _ _) vcfEntry = snpPos `compare` (vcfPos vcfEntry)
-    
+
 produceFromCommand :: Text -> IO (Producer Text (SafeT IO) ())
 produceFromCommand cmd = do
-    let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False 
+    let createProcess = CreateProcess (ShellCommand (T.unpack cmd)) Nothing Nothing False False
                                                         False False False False Nothing Nothing defaultHandler
     (p, _) <- pipeOutput Inherit Inherit createProcess
     return . void . decodeUtf8 $ p
@@ -267,13 +270,13 @@ makeReducedVCF (VCFentry chrom pos _ ref alt _ _ _ formatS genotypes) = do
     return $ VCFentryReduced chrom pos normalizedAlleles covNums
   where
     getCorrectCovNums covNumStr =
-        (\v -> map (v!!) normalizedAlleleIndices) . map (read . T.unpack) . T.splitOn "," $ 
+        (\v -> map (v!!) normalizedAlleleIndices) . map (read . T.unpack) . T.splitOn "," $
         covNumStr
-    normalizedAlleleIndexPairs = filter (\a -> snd a /= "<X>" && snd a /= "<*>") . zip [0..] $ 
+    normalizedAlleleIndexPairs = filter (\a -> snd a /= "<X>" && snd a /= "<*>") . zip [0..] $
                                  ref : alt
     normalizedAlleles = map snd normalizedAlleleIndexPairs
     normalizedAlleleIndices = map fst normalizedAlleleIndexPairs
-    
+
 
 callGenotype :: CallingMode -> Int -> [Int] -> IO Int
 callGenotype mode minDepth covs = do
@@ -296,7 +299,7 @@ callGenotype mode minDepth covs = do
             _ -> throwIO (AssertionFailed "should not happen. CallGenotype called with more \
                                             \than two alleles")
 
-processVcfWithSnpFile :: Int -> CallingMode -> Int -> Pipe (Maybe SnpEntry, Maybe VCFentry) 
+processVcfWithSnpFile :: Int -> CallingMode -> Int -> Pipe (Maybe SnpEntry, Maybe VCFentry)
                                                       FreqSumRow (SafeT IO) r
 processVcfWithSnpFile nrInds mode minDepth = for cat $ \jointEntry -> do
     -- trace (show jointEntry) (return ())
@@ -305,7 +308,7 @@ processVcfWithSnpFile nrInds mode minDepth = for cat $ \jointEntry -> do
             yield $ FreqSumRow snpChrom snpPos snpRef snpAlt (replicate nrInds (-1))
         (Just (SnpEntry snpChrom snpPos snpRef snpAlt), Just vcfEntry) -> do
             let Right (VCFentryReduced _ _ vcfAlleles vcfNums) = makeReducedVCF vcfEntry
-            when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent \ 
+            when (length vcfNums /= nrInds) $ (liftIO . throwIO) (AssertionFailed "inconsistent \
                             \number of genotypes. Check that bam files have different \
                             \readgroup sample names")
             let normalizedAlleleI =
@@ -343,7 +346,7 @@ snpParser = do
   where
     word = T.pack <$> A.many1 (A.satisfy (not . isSpace))
     tab = A.char '\t' >> return ()
-    
+
 showFreqSum :: Text -> FreqSumRow -> Text
 showFreqSum outChrom (FreqSumRow _ pos ref alt calls) =
     format (s%"\t"%d%"\t"%s%"\t"%s%"\t"%s) outChrom pos ref alt callsStr
@@ -358,8 +361,8 @@ printEigenStrat outChrom snpOutHandle = for cat $ \(FreqSumRow _ pos ref alt cal
     yield . T.concat . map (format d . toEigenStratNum) $ calls
   where
     toEigenStratNum c = case c of
-        0 -> 2 :: Int
-        1 -> 1
-        2 -> 0
+        0  -> 2 :: Int
+        1  -> 1
+        2  -> 0
         -1 -> 9
-        _ -> error ("unknown genotype " ++ show c)
+        _  -> error ("unknown genotype " ++ show c)

@@ -1,24 +1,31 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import SequenceFormats.FreqSum (readFreqSumFile, readFreqSumStdIn, FreqSumHeader(..), 
-    FreqSumEntry(..))
-import SequenceFormats.Eigenstrat (readEigenstrat, GenoEntry(..), GenoLine, EigenstratSnpEntry(..), EigenstratIndEntry(..))
-import SequenceFormats.Utils (Chrom(..))
-import SequenceTools.Utils (versionInfoOpt, versionInfoText)
+import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
+                                             EigenstratSnpEntry (..),
+                                             GenoEntry (..), GenoLine,
+                                             readEigenstrat)
+import           SequenceFormats.FreqSum    (FreqSumEntry (..),
+                                             FreqSumHeader (..),
+                                             readFreqSumFile, readFreqSumStdIn)
+import           SequenceFormats.Utils      (Chrom (..))
+import           SequenceTools.Utils        (dosageToEigenstratGeno,
+                                             versionInfoOpt, versionInfoText)
 
-import Control.Applicative ((<|>))
-import Control.Foldl (purely, Fold(..))
-import Control.Monad (forM_)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import qualified Data.Vector as V
-import Lens.Family2 (view)
-import qualified Options.Applicative as OP
-import Pipes (for, Producer, (>->), yield, Consumer, cat)
-import Pipes.Group (groupsBy, folds)
-import Pipes.Safe (MonadSafe, runSafeT)
-import qualified Pipes.Prelude as P
-import System.IO (hPutStrLn, stderr)
-import Text.Printf (printf)
+import           Control.Applicative        ((<|>))
+import           Control.Foldl              (Fold (..), purely)
+import           Control.Monad              (forM_)
+import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import qualified Data.ByteString.Char8      as B
+import qualified Data.Vector                as V
+import           Lens.Family2               (view)
+import qualified Options.Applicative        as OP
+import           Pipes                      (Consumer, Producer, cat, for,
+                                             (>->))
+import           Pipes.Group                (folds, groupsBy)
+import qualified Pipes.Prelude              as P
+import           Pipes.Safe                 (MonadSafe, runSafeT)
+import           System.IO                  (hPutStrLn, stderr)
+import           Text.Printf                (printf)
 
 data ProgOpt = ProgOpt InputOption
 
@@ -30,9 +37,9 @@ type StatsReportAllSamples = [StatsReport]
 
 data StatsReport = StatsReport {
     srNrSitesMissing :: Int,
-    srNrSitesHomRef :: Int,
-    srNrSitesHomAlt :: Int,
-    srNrSitesHet :: Int
+    srNrSitesHomRef  :: Int,
+    srNrSitesHomAlt  :: Int,
+    srNrSitesHet     :: Int
 } deriving (Show)
 
 main :: IO ()
@@ -66,7 +73,7 @@ parseEigenstratInput = EigenstratInput <$> parseGenoFile <*> parseSnpFile <*> pa
 
 runWithOpts :: ProgOpt -> IO ()
 runWithOpts (ProgOpt inputOpt) = runSafeT $ do
-    (names, entryProducer) <- case inputOpt of 
+    (names, entryProducer) <- case inputOpt of
         FreqsumInput fsFile -> runWithFreqSum fsFile
         EigenstratInput genoFile snpFile indFile -> runWithEigenstrat genoFile snpFile indFile
     liftIO $ hPutStrLn stderr ("processing samples: " <> show names)
@@ -76,19 +83,10 @@ runWithOpts (ProgOpt inputOpt) = runSafeT $ do
 
 runWithFreqSum :: (MonadSafe m) => Maybe FilePath -> m ([String], Producer InputEntry m ())
 runWithFreqSum fsFile = do
-    (FreqSumHeader names nrHaps, fsProd) <- case fsFile of
+    (FreqSumHeader names _, fsProd) <- case fsFile of
         Nothing -> readFreqSumStdIn
         Just fn -> readFreqSumFile fn
-    let prod = for fsProd $ \(FreqSumEntry chrom _ _ _ _ _ counts) -> do
-            let genotypes = V.fromList $ do
-                    (count', nrHap) <- zip counts nrHaps
-                    case count' of
-                        Just 0 -> return HomRef
-                        Just x | x == nrHap -> return HomAlt
-                               | x > 0 && x < nrHap -> return Het
-                        Nothing -> return Missing
-                        _ -> error "should not happen"
-            yield $ InputEntry chrom genotypes
+    let prod = fsProd >-> P.map (\fs -> InputEntry (fsChrom fs) (V.fromList . map dosageToEigenstratGeno . fsCounts $ fs))
     return (names, prod)
 
 runWithEigenstrat :: (MonadSafe m) =>
@@ -97,19 +95,19 @@ runWithEigenstrat genoFile snpFile indFile = do
     (indEntries, genoStream) <- readEigenstrat genoFile snpFile indFile
     let names = [name | EigenstratIndEntry name _ _ <- indEntries]
     let prod = genoStream >-> P.map (\(EigenstratSnpEntry chrom _ _ _ _ _, genoLine) -> InputEntry chrom genoLine)
-    return (names, prod)
+    return (map B.unpack names, prod)
 
 runStats :: (MonadIO m) => [String] -> Producer InputEntry m () ->
     Producer (Chrom, StatsReportAllSamples) m ()
 runStats names entryProducer =
-    let groupedProd = view (groupsBy (\(InputEntry c1 _) (InputEntry c2 _) -> c1 == c2))        
+    let groupedProd = view (groupsBy (\(InputEntry c1 _) (InputEntry c2 _) -> c1 == c2))
             entryProducer
     in  purely folds (runStatsPerChrom (length names)) groupedProd
 
 runStatsPerChrom :: Int -> Fold InputEntry (Chrom, StatsReportAllSamples)
 runStatsPerChrom nrSamples = (,) <$> getChrom <*>
-    traverse runStatsPerChromPerSample [0..(nrSamples - 1)]    
-    
+    traverse runStatsPerChromPerSample [0..(nrSamples - 1)]
+
 getChrom :: Fold InputEntry Chrom
 getChrom = Fold (\_ (InputEntry c _) -> c) (Chrom "") id
 
@@ -119,14 +117,14 @@ runStatsPerChromPerSample i = Fold step initial extract
     step :: StatsReport -> InputEntry -> StatsReport
     step accum@(StatsReport miss homr homa het) (InputEntry _ line) = case (line V.! i) of
         Missing -> accum {srNrSitesMissing = miss + 1}
-        HomRef -> accum {srNrSitesHomRef = homr + 1}
-        HomAlt -> accum {srNrSitesHomAlt = homa + 1}
-        Het -> accum {srNrSitesHet = het + 1}
+        HomRef  -> accum {srNrSitesHomRef = homr + 1}
+        HomAlt  -> accum {srNrSitesHomAlt = homa + 1}
+        Het     -> accum {srNrSitesHet = het + 1}
     initial :: StatsReport
     initial = StatsReport 0 0 0 0
     extract :: StatsReport -> StatsReport
     extract = id
-    
+
 reportStats :: (MonadIO m) => [String] -> Consumer (Chrom, StatsReportAllSamples) m ()
 reportStats names = do
     liftIO . putStrLn $ "Chrom\tSample\tMissing\tHomRef\tHomAlt\tHet"
@@ -153,4 +151,4 @@ accumulateAllChromStats names = Fold step initial extract
     extract :: StatsReportAllSamples -> (Chrom, StatsReportAllSamples)
     extract r = (Chrom "Total", r)
 
-        
+

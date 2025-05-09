@@ -1,10 +1,10 @@
 module SequenceTools.UtilsSpec (spec) where
 
-import SequenceTools.Utils (sampleWithoutReplacement)
+import           SequenceTools.Utils (sampleWithoutReplacement)
 
-import Control.Monad (replicateM_)
-import Data.List (sort, union, nub)
-import Test.Hspec
+import           Control.Monad       (replicateM_)
+import           Data.List           (nub, sort, union)
+import           Test.Hspec
 
 spec :: Spec
 spec = testSampleWithoutReplacement
