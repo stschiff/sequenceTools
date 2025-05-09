@@ -4,7 +4,7 @@ RUN yum -y update
 RUN yum -y install zlib-devel wget ncurses-devel ncurses-compat-libs make gcc gcc-c++
 
 # Install GHC since stack's local install has issues
-RUN wget https://downloads.haskell.org/~ghc/9.4.7/ghc-9.6.6-x86_64-centos7-linux.tar.xz
+RUN wget https://downloads.haskell.org/~ghc/9.6.6/ghc-9.6.6-x86_64-centos7-linux.tar.xz
 RUN tar xvf ghc-9.6.6-x86_64-centos7-linux.tar.xz
 RUN cd ghc-9.6.6-x86_64-unknown-linux; ./configure; make install
 
