@@ -28,7 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-latest-arm, macOS-13, macOS-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-latest-arm, macOS-latest, windows-latest]
 
     steps:
       - name: Check out code
@@ -76,30 +76,30 @@ jobs:
           artifacts: ${{ steps.binarypath.outputs.BINARY_PATH }}
           artifactContentType: application/octet-stream
 
-  # build_centos_artifact:
-  #   needs: [create_release]
-  #   runs-on: ubuntu-latest
+  build_centos_artifact:
+    needs: [create_release]
+    runs-on: ubuntu-latest
 
-  #   steps:
-  #     - name: Checkout repo
-  #       uses: actions/checkout@v4
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-  #     - name: Build Docker image
-  #       run: docker build -t linux -f .github/workflows/Dockerfile.centos .
+      - name: Build Docker image
+        run: docker build -t linux -f .github/workflows/Dockerfile.centos .
 
-  #     - name: Create container
-  #       run: docker create --name linuxcontainer linux
+      - name: Create container
+        run: docker create --name linuxcontainer linux
 
-  #     - name: Copy executable
-  #       run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
+      - name: Copy executable
+        run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
 
-  #     - name: Upload Release Asset
-  #       id: upload-release-asset
-  #       uses: ncipollo/release-action@v1
-  #       with:
-  #         name: Release ${{ github.ref_name }}
-  #         draft: true
-  #         allowUpdates: true
-  #         artifactErrorsFailBuild: true
-  #         artifacts: pileupCaller-conda-linux
-  #         artifactContentType: application/octet-stream
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: ncipollo/release-action@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: true
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: pileupCaller-conda-linux
+          artifactContentType: application/octet-stream
