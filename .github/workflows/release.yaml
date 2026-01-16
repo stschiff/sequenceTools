@@ -28,7 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-latest-arm, macOS-13, macOS-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macOS-15-intel, macOS-latest, windows-latest]
 
     steps:
       - name: Check out code
@@ -54,15 +54,16 @@ jobs:
 
       - name: Set binary path name
         id: binarypath
-        run: |
-             if [ "$RUNNER_OS" == "Windows" ]; then
-                 newEXE="pileupCaller-$RUNNER_OS.exe"
-             else
-                 newEXE="pileupCaller-$RUNNER_OS-$RUNNER_ARCH"
-             fi
-             currentEXE="${{ steps.stack.outputs.local-bin }}/pileupCaller"
-             mv $currentEXE $newEXE
-             echo "BINARY_PATH=$newEXE" >> $GITHUB_OUTPUT
+        run: for TOOL in pileupCaller vcf2eigenstrat genoStats; do
+              if [ "$RUNNER_OS" == "Windows" ]; then
+                  newEXE="$TOOL-$RUNNER_OS.exe"
+              else
+                  newEXE="$TOOL-$RUNNER_OS-$RUNNER_ARCH"
+              fi
+              currentEXE="${{ steps.stack.outputs.local-bin }}/$TOOL"
+              mv $currentEXE $newEXE
+              echo "BINARY_PATH=$newEXE" >> $GITHUB_OUTPUT
+            done
         shell: bash
 
       - name: Upload Release Asset
