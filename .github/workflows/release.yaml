@@ -22,90 +22,90 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: true
 
-  build_normal_artifacts:
-    needs: [create_release]
-    name: ${{ matrix.os }}/${{ github.ref }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macOS-15-intel, macOS-latest, windows-latest]
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set tag name
-        uses: olegtarasov/get-tag@v2.1
-        id: tagName
-        with:
-          tagRegex: "v(.*)"
-          tagRegexGroup: 1
-
-      - name: Install stack on macOS, where it is not present (https://github.com/freckle/stack-action/issues/80)
-        if: ${{ runner.os == 'macOS' }}
-        run: curl -sSL https://get.haskellstack.org/ | sh
-
-      - name: Build executable
-        uses: freckle/stack-action@v5
-        id: stack
-        with:
-          test: false
-          stack-build-arguments: --copy-bins --ghc-options="-O2"
-
-      - name: Set binary path names
-        id: binarypaths
-        run: |
-            binaries=()
-            for TOOL in pileupCaller vcf2eigenstrat genoStats; do
-              if [ "$RUNNER_OS" == "Windows" ]; then
-                  newEXE="$TOOL-$RUNNER_OS.exe"
-              else
-                  newEXE="$TOOL-$RUNNER_OS-$RUNNER_ARCH"
-              fi
-              currentEXE="${{ steps.stack.outputs.local-bin }}/$TOOL"
-              mv "$currentEXE" "$newEXE"
-              binaries+=("$newEXE")
-            done
-            # join with commas for release-action
-            binary_paths=$(printf "%s," "${binaries[@]}")
-            binary_paths=${binary_paths%,}
-            echo "BINARY_PATHS=$binary_paths" >> "$GITHUB_OUTPUT"
-        shell: bash
-
-      - name: Upload Release Assets
-        uses: ncipollo/release-action@v1
-        with:
-          name: Release ${{ github.ref_name }}
-          draft: true
-          allowUpdates: true
-          artifactErrorsFailBuild: true
-          artifacts: ${{ steps.binarypaths.outputs.BINARY_PATHS }}
-          artifactContentType: application/octet-stream
-
-  # build_centos_artifact:
+  # build_normal_artifacts:
   #   needs: [create_release]
-  #   runs-on: ubuntu-latest
+  #   name: ${{ matrix.os }}/${{ github.ref }}
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     matrix:
+  #       os: [ubuntu-latest, ubuntu-24.04-arm, macOS-15-intel, macOS-latest, windows-latest]
 
   #   steps:
-  #     - name: Checkout repo
+  #     - name: Check out code
   #       uses: actions/checkout@v4
 
-  #     - name: Build Docker image
-  #       run: docker build -t linux -f .github/workflows/Dockerfile.centos .
+  #     - name: Set tag name
+  #       uses: olegtarasov/get-tag@v2.1
+  #       id: tagName
+  #       with:
+  #         tagRegex: "v(.*)"
+  #         tagRegexGroup: 1
 
-  #     - name: Create container
-  #       run: docker create --name linuxcontainer linux
+  #     - name: Install stack on macOS, where it is not present (https://github.com/freckle/stack-action/issues/80)
+  #       if: ${{ runner.os == 'macOS' }}
+  #       run: curl -sSL https://get.haskellstack.org/ | sh
 
-  #     - name: Copy executable
-  #       run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
+  #     - name: Build executable
+  #       uses: freckle/stack-action@v5
+  #       id: stack
+  #       with:
+  #         test: false
+  #         stack-build-arguments: --copy-bins --ghc-options="-O2"
 
-  #     - name: Upload Release Asset
-  #       id: upload-release-asset
+  #     - name: Set binary path names
+  #       id: binarypaths
+  #       run: |
+  #           binaries=()
+  #           for TOOL in pileupCaller vcf2eigenstrat genoStats; do
+  #             if [ "$RUNNER_OS" == "Windows" ]; then
+  #                 newEXE="$TOOL-$RUNNER_OS.exe"
+  #             else
+  #                 newEXE="$TOOL-$RUNNER_OS-$RUNNER_ARCH"
+  #             fi
+  #             currentEXE="${{ steps.stack.outputs.local-bin }}/$TOOL"
+  #             mv "$currentEXE" "$newEXE"
+  #             binaries+=("$newEXE")
+  #           done
+  #           # join with commas for release-action
+  #           binary_paths=$(printf "%s," "${binaries[@]}")
+  #           binary_paths=${binary_paths%,}
+  #           echo "BINARY_PATHS=$binary_paths" >> "$GITHUB_OUTPUT"
+  #       shell: bash
+
+  #     - name: Upload Release Assets
   #       uses: ncipollo/release-action@v1
   #       with:
   #         name: Release ${{ github.ref_name }}
   #         draft: true
   #         allowUpdates: true
   #         artifactErrorsFailBuild: true
-  #         artifacts: pileupCaller-conda-linux
+  #         artifacts: ${{ steps.binarypaths.outputs.BINARY_PATHS }}
   #         artifactContentType: application/octet-stream
+
+  build_centos_artifact:
+    needs: [create_release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t linux -f .github/workflows/Dockerfile.centos .
+
+      - name: Create container
+        run: docker create --name linuxcontainer linux
+
+      - name: Copy executable
+        run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
+
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: ncipollo/release-action@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: true
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: pileupCaller-conda-linux
+          artifactContentType: application/octet-stream
