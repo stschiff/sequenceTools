@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/38135750.svg)](https://doi.org/10.5281/zenodo.18400553)
+
 # SequenceTools
 
 [Install with Bioconda](https://anaconda.org/bioconda/sequencetools)
