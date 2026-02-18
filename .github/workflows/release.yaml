@@ -97,6 +97,7 @@ jobs:
         run: docker create --name linuxcontainer linux
 
       - name: Copy executable
+        id: binarypaths_conda
         run: |
             docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
             docker cp linuxcontainer:/root/.local/bin/genoStats genoStats-conda-linux
@@ -112,6 +113,6 @@ jobs:
           draft: true
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: ${{ steps.binarypaths.outputs.BINARY_PATHS }}
+          artifacts: ${{ steps.binarypaths_conda.outputs.BINARY_PATHS }}
           artifactContentType: application/octet-stream
 
