@@ -97,7 +97,12 @@ jobs:
         run: docker create --name linuxcontainer linux
 
       - name: Copy executable
-        run: docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
+        run: |
+            docker cp linuxcontainer:/root/.local/bin/pileupCaller pileupCaller-conda-linux
+            docker cp linuxcontainer:/root/.local/bin/genoStats genoStats-conda-linux
+            docker cp linuxcontainer:/root/.local/bin/vcf2eigenstrat vcf2eigenstrat-conda-linux
+            echo "BINARY_PATHS=pileupCaller-conda-linux,genoStats-conda-linux,vcf2eigenstrat-conda-linux" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Upload Release Asset
         id: upload-release-asset
@@ -107,6 +112,6 @@ jobs:
           draft: true
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: pileupCaller-conda-linux
+          artifacts: ${{ steps.binarypaths.outputs.BINARY_PATHS }}
           artifactContentType: application/octet-stream
 
